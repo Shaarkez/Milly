@@ -1,0 +1,4 @@
+project_id = "milly"
+
+[functions.turn-credentials]
+verify_jwt = true

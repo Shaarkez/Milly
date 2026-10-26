@@ -1,0 +1,11 @@
+{
+  "name": "Milly — личные разговоры",
+  "short_name": "Milly",
+  "description": "Тихое место для разговоров с близкими.",
+  "lang": "ru",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#171817",
+  "theme_color": "#171817",
+  "icons": [{ "src": "/milly-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
