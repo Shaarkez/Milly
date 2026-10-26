@@ -367,7 +367,8 @@ export default function Messenger() {
   async function finishCall(notify = true) {
     const current = callRef.current ?? pendingOffer.current
     window.clearTimeout(callTimeout.current)
-    if (notify && current && client && user) await client.from('call_signals').insert({ call_id: current.id, from_uid: user.id, to_uid: 'peer' in current ? current.peer : current.from, kind: 'hangup', payload: null })
+    const callId = current && ('peer' in current ? current.id : current.callId)
+    if (notify && current && callId && client && user) await client.from('call_signals').insert({ call_id: callId, from_uid: user.id, to_uid: 'peer' in current ? current.peer : current.from, kind: 'hangup', payload: null })
     peerConnection.current?.close(); peerConnection.current = null; localStream.current?.getTracks().forEach((track) => track.stop()); localStream.current = null
     if (audioRef.current) audioRef.current.srcObject = null
     callRef.current = null; pendingOffer.current = null; pendingCandidates.current = []; callBusy.current = false; setCallPhase('idle'); setMuted(false); setCallDuration(0)
