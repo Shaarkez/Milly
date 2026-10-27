@@ -175,10 +175,26 @@ export default function Messenger() {
     }
     loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
     const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => { if (status === 'SUBSCRIBED') await presence.track({ online_at: new Date().toISOString() }) })
-    const requestsChannel = client.channel(`requests:${user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => loadAccount().catch(() => undefined)).subscribe()
-    const friendshipLow = client.channel(`friends-low:${user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `user_low=eq.${user.id}` }, () => loadAccount().catch(() => undefined)).subscribe()
-    const friendshipHigh = client.channel(`friends-high:${user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `user_high=eq.${user.id}` }, () => loadAccount().catch(() => undefined)).subscribe()
-    return () => { cancelled = true; void client.removeChannel(presence); void client.removeChannel(requestsChannel); void client.removeChannel(friendshipLow); void client.removeChannel(friendshipHigh) }
+    let accountRefresh: number | undefined
+    const accountChannel = client.channel(`account:${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }))
+      .subscribe((status, failure) => {
+        if (status === 'SUBSCRIBED') {
+          if (accountRefresh) { window.clearInterval(accountRefresh); accountRefresh = undefined }
+          loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setError(failure instanceof Error ? `Не удалось подключиться к обновлениям друзей: ${failure.message}` : 'Не удалось подключиться к обновлениям друзей. Проверьте публикацию friend_requests и friendships в Supabase Realtime.')
+          if (!accountRefresh) accountRefresh = window.setInterval(() => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }), 5000)
+        }
+      })
+    return () => {
+      cancelled = true
+      if (accountRefresh) window.clearInterval(accountRefresh)
+      void client.removeChannel(presence)
+      void client.removeChannel(accountChannel)
+    }
   }, [client, user?.id])
 
   useEffect(() => {
@@ -238,10 +254,16 @@ export default function Messenger() {
         for (const message of [...(keepCurrent ? current : []), ...enriched, ...realtimeMessages.values()]) merged.set(message.id, message)
         return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
       })
+      const lastMessage = enriched[enriched.length - 1]
+      if (lastMessage) {
+        setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage, updated_at: lastMessage.created_at } : row)
+          .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+      }
       setHasOlder(rows.length === pageSize); setLoadingMessages(false)
       if (!keepCurrent) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
     }
     load().catch((caught) => { if (!cancelled) { setError(readableError(caught)); setLoadingMessages(false) } })
+    let messageRefresh: number | undefined
     const channel = client.channel(`messages:${active.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${active.id}` }, async ({ new: raw }) => {
       const [message] = await signedImages([raw as Message])
       if (cancelled) return
@@ -249,11 +271,21 @@ export default function Messenger() {
       setMessages((current) => current.some((row) => row.id === message.id) ? current : [...current, message])
       setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
       requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
-    }).subscribe((status) => {
-      if (status === 'SUBSCRIBED') void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError('Нет соединения с обновлениями сообщений. Проверьте настройки Realtime в Supabase.')
+    }).subscribe((status, failure) => {
+      if (status === 'SUBSCRIBED') {
+        if (messageRefresh) { window.clearInterval(messageRefresh); messageRefresh = undefined }
+        void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        setError(failure instanceof Error ? `Realtime сообщений отключён: ${failure.message}` : 'Realtime сообщений недоступен. Проверяем новые сообщения автоматически.')
+        if (!messageRefresh) messageRefresh = window.setInterval(() => { void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) }) }, 2500)
+      }
     })
-    return () => { cancelled = true; void client.removeChannel(channel) }
+    return () => {
+      cancelled = true
+      if (messageRefresh) window.clearInterval(messageRefresh)
+      void client.removeChannel(channel)
+    }
   }, [client, user?.id, active?.id])
 
   useEffect(() => {
@@ -319,11 +351,26 @@ export default function Messenger() {
   }
 
   async function handleRequest(request: FriendRequest, accept: boolean) {
-    if (!client) return
+    if (!client || !user) return
     const result = accept ? await client.rpc('accept_friend_request', { request_id: request.id }) : await client.from('friend_requests').update({ status: 'declined' }).eq('id', request.id)
     if (result.error) { setError(readableError(result.error)); return }
     setRequests((current) => current.filter((row) => row.id !== request.id))
-    if (accept && request.sender) { const next = [...friends, request.sender]; setFriends(next); friendsRef.current = next; setNotice('Запрос принят. Теперь можно начать разговор.') }
+    if (accept && request.sender) {
+      const next = [...friends, request.sender]
+      setFriends(next); friendsRef.current = next
+      const { data: conversationId, error: conversationError } = await client.rpc('get_or_create_dm', { peer_uid: request.sender.id })
+      if (conversationError) { setError(readableError(conversationError)); return }
+      const conversation: Conversation = {
+        id: conversationId as string,
+        user_low: user.id < request.sender.id ? user.id : request.sender.id,
+        user_high: user.id < request.sender.id ? request.sender.id : user.id,
+        updated_at: new Date().toISOString(),
+        peer: request.sender,
+      }
+      setConversations((current) => current.some((row) => row.id === conversation.id) ? current : [conversation, ...current])
+      setActive(conversation); setSection('chats')
+      setNotice('Запрос принят. Чат с другом уже открыт.')
+    }
   }
 
   async function removeFriend(friend: Profile) {
