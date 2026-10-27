@@ -29,7 +29,9 @@ const dayLabel = (value: string) => {
 }
 
 function Avatar({ name, online = false, large = false, image }: { name: string; online?: boolean; large?: boolean; image?: string }) {
-  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image ? <img src={image} alt="" /> : initials(name)}{online && <i className="presence-dot" />}</span>
+  const [imageFailed, setImageFailed] = useState(false)
+  useEffect(() => setImageFailed(false), [image])
+  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image && !imageFailed ? <img src={image} alt="" onError={() => setImageFailed(true)} /> : initials(name)}{online && <i className="presence-dot" />}</span>
 }
 
 function AuthScreen() {
@@ -136,6 +138,7 @@ export default function Messenger() {
   const client = supabase
   const user = session?.user
   const activeMessageIds = messages.map((message) => message.id)
+  const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -242,6 +245,9 @@ export default function Messenger() {
   useEffect(() => {
     if (!client || !user) return
     let cancelled = false
+    let accountRefresh: number | undefined
+    let refreshInProgress = false
+    let retryDelay = 3000
     setOwnAvatar('')
     const loadAccount = async () => {
       const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }] = await Promise.all([
@@ -250,10 +256,10 @@ export default function Messenger() {
         client.from('friend_requests').select('id,sender_id,receiver_id,created_at').eq('receiver_id', user.id).eq('status', 'pending'),
       ])
       if (cancelled) return
-      if (ownError || linksError || requestError) { setError(readableError(ownError || linksError || requestError)); return }
+      if (ownError || linksError || requestError) throw ownError || linksError || requestError
       const { data: ownAliases, error: ownAliasesError } = await client.from('profile_aliases').select('username').eq('user_id', user.id)
       if (cancelled) return
-      if (ownAliasesError) { setError(readableError(ownAliasesError)); return }
+      if (ownAliasesError) throw ownAliasesError
       setProfile({ ...own, aliases: (ownAliases ?? []).map((alias: { username: string }) => alias.username) } as Profile)
       if (own?.avatar_path) {
         const { data, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(own.avatar_path, 3600)
@@ -272,13 +278,14 @@ export default function Messenger() {
         friendIds.length ? client.from('conversations').select('id,user_low,user_high,updated_at').or(`user_low.eq.${user.id},user_high.eq.${user.id}`) : Promise.resolve({ data: [], error: null }),
       ])
       if (cancelled) return
-      if (peopleError || aliasesError || convoError) { setError(readableError(peopleError || aliasesError || convoError)); return }
+      if (peopleError || aliasesError || convoError) throw peopleError || aliasesError || convoError
       const aliasesById = new Map<string, string[]>()
       for (const alias of aliases ?? []) aliasesById.set(alias.user_id, [...(aliasesById.get(alias.user_id) ?? []), alias.username])
       const profiles = await Promise.all((people ?? []).map(async (row: Profile) => {
         const person = { ...row, aliases: aliasesById.get(row.id) ?? [] }
         if (!person.avatar_path) return person
-        const { data: signed } = await client.storage.from('milly-avatars').createSignedUrl(person.avatar_path, 3600)
+        const { data: signed, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(person.avatar_path, 3600)
+        if (avatarError && !cancelled) setError(`Не удалось загрузить аватар ${person.display_name}: ${readableError(avatarError)}`)
         return { ...person, avatar_url: signed?.signedUrl }
       }))
       if (cancelled) return
@@ -295,27 +302,52 @@ export default function Messenger() {
       }
       if (!cancelled) setConversations(chats.sort((a: Conversation, b: Conversation) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
     }
-    loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
+    const refreshAccount = async () => {
+      if (cancelled || refreshInProgress) return
+      refreshInProgress = true
+      try {
+        await loadAccount()
+      } catch (caught) {
+        if (!cancelled) setError(readableError(caught))
+      } finally {
+        refreshInProgress = false
+      }
+    }
+    const stopAccountFallback = () => {
+      if (accountRefresh) window.clearTimeout(accountRefresh)
+      accountRefresh = undefined
+    }
+    const scheduleAccountFallback = () => {
+      if (cancelled || accountRefresh) return
+      accountRefresh = window.setTimeout(async () => {
+        accountRefresh = undefined
+        await refreshAccount()
+        retryDelay = Math.min(retryDelay * 2, 30000)
+        scheduleAccountFallback()
+      }, retryDelay)
+    }
+    const avatarRefresh = window.setInterval(() => { void refreshAccount() }, 45 * 60 * 1000)
+    void refreshAccount()
     const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => { if (status === 'SUBSCRIBED') await presence.track({ online_at: new Date().toISOString() }) })
-    const accountRefresh = window.setInterval(() => {
-      loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
-    }, 15000)
     const accountChannel = client.channel(`account:${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
       .subscribe((status, failure) => {
         if (status === 'SUBSCRIBED') {
+          stopAccountFallback()
           setNotice((current) => current.startsWith('Realtime друзей недоступен') ? '' : current)
-          loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
+          void refreshAccount()
         }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           const reason = failure instanceof Error ? ` Причина: ${failure.message}` : ''
-          setNotice(`Realtime друзей недоступен; список обновляется автоматически каждые 15 секунд.${reason}`)
+          setNotice(`Realtime друзей недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд.${reason}`)
+          scheduleAccountFallback()
         }
       })
     return () => {
       cancelled = true
-      window.clearInterval(accountRefresh)
+      stopAccountFallback()
+      window.clearInterval(avatarRefresh)
       void client.removeChannel(presence)
       void client.removeChannel(accountChannel)
     }
@@ -336,7 +368,7 @@ export default function Messenger() {
       return channel
     })
     return () => { for (const channel of channels) void client.removeChannel(channel) }
-  }, [client, user?.id, friends])
+  }, [client, user?.id, friendIdsKey])
 
   useEffect(() => {
     if (!client || dialog !== 'friends' || friendId.trim().length < 2) {
@@ -366,50 +398,82 @@ export default function Messenger() {
     if (!client || !user || !active) { setMessages([]); return }
     let cancelled = false
     const realtimeMessages = new Map<string, Message>()
+    let messageRefresh: number | undefined
+    let refreshInProgress = false
+    let retryDelay = 2500
     setMessages([]); setLoadingMessages(true)
     const load = async (keepCurrent = false) => {
-      const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).limit(pageSize)
-      if (cancelled) return
-      if (failure) { setError(readableError(failure)); setLoadingMessages(false); return }
-      const rows = ((data ?? []) as Message[]).reverse(); const enriched = await signedImages(rows)
-      if (cancelled) return
-      setMessages((current) => {
-        const merged = new Map<string, Message>()
-        for (const message of [...(keepCurrent ? current : []), ...enriched, ...realtimeMessages.values()]) merged.set(message.id, message)
-        return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
-      })
-      const lastMessage = enriched[enriched.length - 1]
-      if (lastMessage) {
-        setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage, updated_at: lastMessage.created_at } : row)
-          .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+      if (cancelled || refreshInProgress) return
+      refreshInProgress = true
+      try {
+        const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).limit(pageSize)
+        if (cancelled) return
+        if (failure) throw failure
+        const rows = ((data ?? []) as Message[]).reverse(); const enriched = await signedImages(rows)
+        if (cancelled) return
+        setMessages((current) => {
+          const merged = new Map<string, Message>()
+          for (const message of [...(keepCurrent ? current : []), ...enriched, ...realtimeMessages.values()]) merged.set(message.id, message)
+          return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+        })
+        const lastMessage = enriched[enriched.length - 1]
+        if (lastMessage) {
+          setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage, updated_at: lastMessage.created_at } : row)
+            .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+        }
+        setHasOlder(rows.length === pageSize); setLoadingMessages(false)
+        if (!keepCurrent) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
+      } finally {
+        refreshInProgress = false
       }
-      setHasOlder(rows.length === pageSize); setLoadingMessages(false)
-      if (!keepCurrent) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
     }
     load().catch((caught) => { if (!cancelled) { setError(readableError(caught)); setLoadingMessages(false) } })
-    let messageRefresh: number | undefined
+    const stopMessageFallback = () => {
+      if (messageRefresh) window.clearTimeout(messageRefresh)
+      messageRefresh = undefined
+    }
+    const scheduleMessageFallback = () => {
+      if (cancelled || messageRefresh) return
+      messageRefresh = window.setTimeout(async () => {
+        messageRefresh = undefined
+        try {
+          await load(true)
+        } catch (caught) {
+          if (!cancelled) setError(readableError(caught))
+        }
+        retryDelay = Math.min(retryDelay * 2, 30000)
+        scheduleMessageFallback()
+      }, retryDelay)
+    }
     const channel = client.channel(`messages:${active.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${active.id}` }, async ({ new: raw }) => {
-      const [message] = await signedImages([raw as Message])
-      if (cancelled) return
-      realtimeMessages.set(message.id, message)
-      setMessages((current) => current.some((row) => row.id === message.id) ? current : [...current, message])
-      setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
+      try {
+        const [message] = await signedImages([raw as Message])
+        if (cancelled) return
+        realtimeMessages.set(message.id, message)
+        setMessages((current) => current.some((row) => row.id === message.id) ? current : [...current, message])
+        setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+        requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
+      } catch (caught) {
+        if (!cancelled) setError(readableError(caught))
+      }
     }).subscribe((status, failure) => {
       if (status === 'SUBSCRIBED') {
-        if (messageRefresh) { window.clearInterval(messageRefresh); messageRefresh = undefined }
+        stopMessageFallback()
+        retryDelay = 2500
         setError((current) => current.startsWith('Realtime сообщений отключён:') || current.startsWith('Realtime сообщений недоступен.') ? '' : current)
         setNotice((current) => current.startsWith('Realtime сообщений проверяются автоматически') ? '' : current)
         void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
       }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        setNotice(failure instanceof Error ? `Realtime сообщений проверяются автоматически. Причина: ${failure.message}` : 'Realtime сообщений проверяются автоматически с резервным обновлением.')
-        if (!messageRefresh) messageRefresh = window.setInterval(() => { void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) }) }, 2500)
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setNotice(failure instanceof Error
+          ? `Realtime сообщений недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд. Причина: ${failure.message}`
+          : 'Realtime сообщений недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд.')
+        scheduleMessageFallback()
       }
     })
     return () => {
       cancelled = true
-      if (messageRefresh) window.clearInterval(messageRefresh)
+      stopMessageFallback()
       void client.removeChannel(channel)
     }
   }, [client, user?.id, active?.id])
@@ -563,7 +627,8 @@ export default function Messenger() {
     if (!client) return rows
     return Promise.all(rows.map(async (row) => {
       if (!row.image_path) return row
-      const { data } = await client.storage.from('milly-media').createSignedUrl(row.image_path, 3600)
+      const { data, error: signedUrlError } = await client.storage.from('milly-media').createSignedUrl(row.image_path, 3600)
+      if (signedUrlError) throw signedUrlError
       return { ...row, image_url: data?.signedUrl }
     }))
   }
