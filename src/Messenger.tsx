@@ -183,10 +183,12 @@ export default function Messenger() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) }))
       .subscribe((status, failure) => {
         if (status === 'SUBSCRIBED') {
+          setNotice((current) => current.startsWith('Realtime друзей недоступен') ? '' : current)
           loadAccount().catch((caught) => { if (!cancelled) setError(readableError(caught)) })
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setError(failure instanceof Error ? `Не удалось подключиться к обновлениям друзей: ${failure.message}` : 'Не удалось подключиться к обновлениям друзей. Проверьте публикацию friend_requests и friendships в Supabase Realtime.')
+          const reason = failure instanceof Error ? ` Причина: ${failure.message}` : ''
+          setNotice(`Realtime друзей недоступен; список обновляется автоматически каждые 5 секунд.${reason}`)
         }
       })
     return () => {
@@ -296,13 +298,31 @@ export default function Messenger() {
     let pollTimer: number | undefined
     let polling = false
     const processedSignals = new Set<number>()
+    const earlyCandidates = new Map<string, RTCIceCandidateInit[]>()
     const listenFrom = new Date().toISOString()
     const processSignal = async (signal: CallSignal) => {
       if (cancelled || processedSignals.has(signal.id)) return
+      const activeCall = callRef.current?.id === signal.call_id || pendingOffer.current?.callId === signal.call_id
+      if (signal.kind === 'ice' && !activeCall && signal.payload) {
+        let candidates = earlyCandidates.get(signal.call_id)
+        if (!candidates) {
+          if (earlyCandidates.size >= 20) {
+            const oldestCallId = earlyCandidates.keys().next().value
+            if (oldestCallId) earlyCandidates.delete(oldestCallId)
+          }
+          candidates = []
+          earlyCandidates.set(signal.call_id, candidates)
+        }
+        if (candidates.length < 32) candidates.push(signal.payload as RTCIceCandidateInit)
+        processedSignals.add(signal.id)
+        return
+      }
       processedSignals.add(signal.id)
       if (signal.kind === 'offer') {
         if (callBusy.current) { await client.from('call_signals').insert({ call_id: signal.call_id, from_uid: user.id, to_uid: signal.from_uid, kind: 'reject', payload: null }); return }
         callBusy.current = true; pendingOffer.current = { callId: signal.call_id, from: signal.from_uid, offer: signal.payload as RTCSessionDescriptionInit }
+        pendingCandidates.current = earlyCandidates.get(signal.call_id) ?? []
+        earlyCandidates.delete(signal.call_id)
         setIncomingFrom(friendsRef.current.find((friend) => friend.id === signal.from_uid)?.display_name ?? 'Ваш друг'); setCallPhase('incoming')
         window.clearTimeout(callTimeout.current)
         callTimeout.current = window.setTimeout(() => { if (pendingOffer.current?.callId === signal.call_id) { void finishCall(true); setNotice('Входящий звонок пропущен.') } }, 45000)
@@ -484,9 +504,21 @@ export default function Messenger() {
   }
 
   function bindPeer(peer: RTCPeerConnection, callId: string, peerId: string) {
-    peer.onicecandidate = (event) => { if (event.candidate && client && user) void client.from('call_signals').insert({ call_id: callId, from_uid: user.id, to_uid: peerId, kind: 'ice', payload: event.candidate.toJSON() }) }
+    peer.onicecandidate = (event) => {
+      if (!event.candidate || !client || !user) return
+      void client.from('call_signals').insert({ call_id: callId, from_uid: user.id, to_uid: peerId, kind: 'ice', payload: event.candidate.toJSON() })
+        .then(({ error: failure }) => {
+          if (failure && peerConnection.current === peer) setError(`Не удалось отправить сетевые данные звонка: ${readableError(failure)}`)
+        })
+    }
     peer.ontrack = (event) => { if (audioRef.current) { audioRef.current.srcObject = event.streams[0]; void audioRef.current.play().catch(() => undefined) } }
-    peer.onconnectionstatechange = () => { if (peer.connectionState === 'connected') setCallPhase('connected'); if (peer.connectionState === 'failed') { void finishCall(false); setNotice('Соединение звонка прервано.') } }
+    peer.onconnectionstatechange = () => {
+      if (peer.connectionState === 'connected') setCallPhase('connected')
+      if (peer.connectionState === 'failed') {
+        void finishCall(false)
+        setNotice('Не удалось установить аудиосоединение. Без TURN прямое соединение может быть заблокировано сетью; попробуйте другую сеть или настройте TURN.')
+      }
+    }
     for (const track of localStream.current?.getTracks() ?? []) peer.addTrack(track, localStream.current!)
   }
 
