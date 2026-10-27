@@ -250,13 +250,14 @@ export default function Messenger() {
     let retryDelay = 3000
     setOwnAvatar('')
     const loadAccount = async () => {
-      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }] = await Promise.all([
+      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: convoRows, error: convoError }] = await Promise.all([
         client.from('profiles').select('id,milly_id,user_number,username,display_name,avatar_path,is_verified,registration_date_override,created_at').eq('id', user.id).single(),
         client.from('friendships').select('user_low,user_high').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
         client.from('friend_requests').select('id,sender_id,receiver_id,created_at').eq('receiver_id', user.id).eq('status', 'pending'),
+        client.from('conversations').select('id,user_low,user_high,updated_at').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
       ])
       if (cancelled) return
-      if (ownError || linksError || requestError) throw ownError || linksError || requestError
+      if (ownError || linksError || requestError || convoError) throw ownError || linksError || requestError || convoError
       const { data: ownAliases, error: ownAliasesError } = await client.from('profile_aliases').select('username').eq('user_id', user.id)
       if (cancelled) return
       if (ownAliasesError) throw ownAliasesError
@@ -271,14 +272,14 @@ export default function Messenger() {
       }
       const friendIds = (links ?? []).map((row: { user_low: string; user_high: string }) => row.user_low === user.id ? row.user_high : row.user_low)
       const requestIds = (requestRows ?? []).map((row: FriendRequest) => row.sender_id)
-      const allIds = [...new Set([...friendIds, ...requestIds])]
-      const [{ data: people, error: peopleError }, { data: aliases, error: aliasesError }, { data: convoRows, error: convoError }] = await Promise.all([
+      const conversationPeerIds = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => row.user_low === user.id ? row.user_high : row.user_low)
+      const allIds = [...new Set([...friendIds, ...requestIds, ...conversationPeerIds])]
+      const [{ data: people, error: peopleError }, { data: aliases, error: aliasesError }] = await Promise.all([
         allIds.length ? client.from('profiles').select('id,milly_id,user_number,username,display_name,avatar_path,is_verified,registration_date_override,created_at').in('id', allIds) : Promise.resolve({ data: [], error: null }),
         allIds.length ? client.from('profile_aliases').select('user_id,username').in('user_id', allIds) : Promise.resolve({ data: [], error: null }),
-        friendIds.length ? client.from('conversations').select('id,user_low,user_high,updated_at').or(`user_low.eq.${user.id},user_high.eq.${user.id}`) : Promise.resolve({ data: [], error: null }),
       ])
       if (cancelled) return
-      if (peopleError || aliasesError || convoError) throw peopleError || aliasesError || convoError
+      if (peopleError || aliasesError) throw peopleError || aliasesError
       const aliasesById = new Map<string, string[]>()
       for (const alias of aliases ?? []) aliasesById.set(alias.user_id, [...(aliasesById.get(alias.user_id) ?? []), alias.username])
       const profiles = await Promise.all((people ?? []).map(async (row: Profile) => {
@@ -367,7 +368,14 @@ export default function Messenger() {
         }).subscribe()
       return channel
     })
-    return () => { for (const channel of channels) void client.removeChannel(channel) }
+    return () => {
+      for (const channel of channels) void client.removeChannel(channel)
+      setOnline((current) => {
+        const next = new Set(current)
+        for (const friend of friends) next.delete(friend.id)
+        return next
+      })
+    }
   }, [client, user?.id, friendIdsKey])
 
   useEffect(() => {
@@ -690,9 +698,8 @@ export default function Messenger() {
       if (failure) throw failure
       setFriends((current) => current.filter((row) => row.id !== friend.id))
       friendsRef.current = friendsRef.current.filter((row) => row.id !== friend.id)
-      if (active?.peer.id === friend.id) setActive(null)
       setFriendToRemove(null)
-      setNotice(`${friend.display_name} удалён(а) из друзей.`)
+      setNotice(`${friend.display_name} удалён(а) из друзей. История личного диалога сохранена.`)
     } catch (caught) {
       setError(readableError(caught))
     } finally {
