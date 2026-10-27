@@ -654,13 +654,54 @@ export default function Messenger() {
     return [...fallback, ...data.iceServers] as RTCIceServer[]
   }
 
+  async function iceFailureDetails(peer: RTCPeerConnection, errors: Set<string>) {
+    let route = 'Выбранный ICE-маршрут не определён.'
+    try {
+      const stats = await peer.getStats()
+      const reports = [...stats.values()]
+      const selectedPair = reports.find((report) => {
+        if (report.type !== 'candidate-pair') return false
+        const pair = report as RTCStats & { selected?: boolean; nominated?: boolean; state?: string }
+        return pair.selected === true || (pair.nominated === true && pair.state === 'succeeded')
+      }) as (RTCStats & { localCandidateId?: string; remoteCandidateId?: string }) | undefined
+      if (selectedPair) {
+        const local = selectedPair.localCandidateId
+          ? stats.get(selectedPair.localCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
+          : undefined
+        const remote = selectedPair.remoteCandidateId
+          ? stats.get(selectedPair.remoteCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
+          : undefined
+        route = `Маршрут: ${local?.candidateType ?? 'unknown'}/${local?.protocol ?? '?'} → ${remote?.candidateType ?? 'unknown'}/${remote?.protocol ?? '?'}.`
+      } else {
+        const localTypes = [...new Set(reports
+          .filter((report) => report.type === 'local-candidate')
+          .map((report) => {
+            const candidate = report as RTCStats & { candidateType?: string; protocol?: string }
+            return `${candidate.candidateType}/${candidate.protocol}`
+          }))]
+        route = localTypes.length
+          ? `Локальные ICE-кандидаты: ${localTypes.join(', ')}.`
+          : 'Браузер не собрал ICE-кандидаты.'
+      }
+    } catch {
+      route = 'Не удалось прочитать ICE-статистику браузера.'
+    }
+    const serverErrors = [...errors]
+    return `${route}${serverErrors.length ? ` Ошибки ICE-серверов: ${serverErrors.join('; ')}.` : ' Ошибок ICE-серверов браузер не сообщил.'}`
+  }
+
   function bindPeer(peer: RTCPeerConnection, callId: string, peerId: string) {
+    const iceErrors = new Set<string>()
+    let failureHandled = false
     peer.onicecandidate = (event) => {
       if (!event.candidate || !client || !user) return
       void client.from('call_signals').insert({ call_id: callId, from_uid: user.id, to_uid: peerId, kind: 'ice', payload: event.candidate.toJSON() })
         .then(({ error: failure }) => {
           if (failure && peerConnection.current === peer) setError(`Не удалось отправить сетевые данные звонка: ${readableError(failure)}`)
         })
+    }
+    peer.onicecandidateerror = (event) => {
+      iceErrors.add(`${event.url || 'ICE server'}: ${event.errorCode}${event.errorText ? ` ${event.errorText}` : ''}`)
     }
     peer.ontrack = (event) => {
       const stream = event.streams[0]
@@ -671,13 +712,17 @@ export default function Messenger() {
     }
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === 'connected') setCallPhase('connected')
-      if (peer.connectionState === 'failed') {
-        void finishCall(false)
-        const mediaType = peer.getSenders().some((sender) => sender.track?.kind === 'video') ? 'видеосоединение' : 'аудиосоединение'
-        const detail = turnFailure.current
-          ? ` TURN недоступен: ${turnFailure.current}.`
-          : ' TURN credentials получены, но соединение не прошло ICE-проверку; возможно, TURN-провайдер или сеть блокирует выбранный маршрут.'
-        setNotice(`Не удалось установить ${mediaType}.${detail}`)
+      if (peer.connectionState === 'failed' && !failureHandled) {
+        failureHandled = true
+        void (async () => {
+          const diagnostics = await iceFailureDetails(peer, iceErrors)
+          const mediaType = peer.getSenders().some((sender) => sender.track?.kind === 'video') ? 'видеосоединение' : 'аудиосоединение'
+          const detail = turnFailure.current
+            ? `TURN недоступен: ${turnFailure.current}.`
+            : 'TURN credentials получены, но это ещё не подтверждает доступность relay-сервера.'
+          await finishCall(false)
+          setNotice(`Не удалось установить ${mediaType}. ${detail} ${diagnostics}`)
+        })()
       }
     }
     for (const track of localStream.current?.getTracks() ?? []) peer.addTrack(track, localStream.current!)
