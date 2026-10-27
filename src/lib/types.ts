@@ -6,6 +6,9 @@ export type Profile = {
   display_name: string
   avatar_path: string | null
   avatar_url?: string
+  is_verified?: boolean
+  registration_date_override?: string | null
+  aliases?: string[]
 }
 
 export type Message = {

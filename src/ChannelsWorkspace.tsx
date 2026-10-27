@@ -4,7 +4,7 @@ import { ArrowLeft, Hash, LoaderCircle, MessageSquare, Plus, Send, Users, X } fr
 import type { Profile } from './lib/types'
 import { readableError } from './lib/supabase'
 
-type Space = { id: string; name: string; owner_id: string; role: 'owner' | 'member' }
+type Space = { id: string; name: string; owner_id: string; role: 'owner' | 'member'; display_member_count_override: number | null }
 type SpaceChannel = { id: string; space_id: string; name: string; created_at: string }
 type ChannelMessage = { id: string; channel_id: string; sender_id: string; body: string; created_at: string }
 type Reaction = { id: number; channel_message_id: string; user_id: string; emoji: string }
@@ -71,7 +71,7 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
 
     const ids = membershipRows.map((row) => row.space_id)
     const [{ data: spaceRows, error: spacesError }, { data: channelRows, error: channelsError }, { data: allMembers, error: membersError }] = await Promise.all([
-      client.from('private_spaces').select('id,name,owner_id').in('id', ids).order('created_at'),
+      client.from('private_spaces').select('id,name,owner_id,display_member_count_override').in('id', ids).order('created_at'),
       client.from('private_space_channels').select('id,space_id,name,created_at').in('space_id', ids).order('created_at'),
       client.from('private_space_members').select('space_id,user_id').in('space_id', ids),
     ])
@@ -300,12 +300,12 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
         <nav className="space-channel-list" aria-label="Каналы">
           {spaceChannels.map((channel) => <button key={channel.id} className={`space-channel-button${channel.id === activeChannelId ? ' selected' : ''}`} onClick={() => setActiveChannelId(channel.id)}><Hash size={16} /><span>{channel.name}</span></button>)}
         </nav>
-        <div className="channel-space-foot"><Avatar profile={profile} size="small" /><span><strong>{profile.display_name}</strong><small>#{profile.user_number}</small></span><span className="member-count" title={`${memberCounts[activeSpaceId] ?? 0} участников`}><Users size={14} />{memberCounts[activeSpaceId] ?? 0}</span></div>
+        <div className="channel-space-foot"><Avatar profile={profile} size="small" /><span><strong>{profile.display_name}</strong><small>#{profile.user_number}</small></span><span className="member-count" title={`${activeSpace?.display_member_count_override ?? memberCounts[activeSpaceId] ?? 0} участников`}><Users size={14} />{activeSpace?.display_member_count_override ?? memberCounts[activeSpaceId] ?? 0}</span></div>
       </>}
     </aside>
     <section className="channel-chat-pane">
       {activeChannel ? <>
-        <header className="channel-chat-header"><div className="channel-title-icon"><Hash size={19} /></div><div><h2>{activeChannel.name}</h2><p>{activeSpace?.name} · закрытый канал</p></div>        <span className="channel-member-pill"><Users size={15} />{memberCounts[activeSpaceId] ?? 0}</span></header>
+        <header className="channel-chat-header"><div className="channel-title-icon"><Hash size={19} /></div><div><h2>{activeChannel.name}</h2><p>{activeSpace?.name} · закрытый канал</p></div>        <span className="channel-member-pill"><Users size={15} />{activeSpace?.display_member_count_override ?? memberCounts[activeSpaceId] ?? 0}</span></header>
         <div className="channel-messages-scroll" ref={scrollRef}>
           {loadingMessages && <div className="channel-loading"><LoaderCircle className="spin" size={17} /> Загружаем сообщения</div>}
           {!messages.length && !loadingMessages ? <div className="channel-welcome"><div className="channel-welcome-icon"><Hash size={24} /></div><span>НАЧАЛО КАНАЛА</span><h2>Здесь начинается<br />общая история.</h2><p>Напишите первое сообщение в #{activeChannel.name}.</p></div> : messages.map((message) => {

@@ -5,6 +5,7 @@ import './styles.css'
 import './theme.css'
 import './interactions.css'
 import './experience.css'
+import './light-blue.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
