@@ -101,6 +101,7 @@ export default function Messenger() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [online, setOnline] = useState<Set<string>>(new Set())
+  const [presenceUnknown, setPresenceUnknown] = useState<Set<string>>(new Set())
   const [connected, setConnected] = useState(navigator.onLine)
   const [sending, setSending] = useState(false)
   const [callPhase, setCallPhase] = useState<CallPhase>('idle')
@@ -331,7 +332,23 @@ export default function Messenger() {
     }
     const avatarRefresh = window.setInterval(() => { void refreshAccount() }, 45 * 60 * 1000)
     void refreshAccount()
-    const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => { if (status === 'SUBSCRIBED') await presence.track({ online_at: new Date().toISOString() }) })
+    const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        try {
+          const result = await presence.track({ online_at: new Date().toISOString() })
+          if (!cancelled) {
+            if (result !== 'ok') setNotice('Realtime присутствия подключён, но публикация онлайн-статуса не удалась.')
+            else setNotice((current) => current.startsWith('Realtime присутствия') || current.startsWith('Не удалось опубликовать онлайн-статус') ? '' : current)
+          }
+        } catch (caught) {
+          if (!cancelled) setNotice(`Не удалось опубликовать онлайн-статус: ${readableError(caught)}`)
+        }
+        return
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        if (!cancelled) setNotice('Realtime присутствия недоступен; онлайн-статусы могут временно не обновляться.')
+      }
+    })
     const accountChannel = client.channel(`account:${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
@@ -358,21 +375,43 @@ export default function Messenger() {
 
   useEffect(() => {
     if (!client || !user) return
+    let cancelled = false
+    setPresenceUnknown((current) => new Set([...current, ...friends.map((friend) => friend.id)]))
     const channels = friends.map((friend) => {
       const channel = client.channel(`milly-presence:${friend.id}`, { config: { private: true, presence: { key: friend.id } } })
         .on('presence', { event: 'sync' }, () => {
+          if (cancelled) return
           setOnline((current) => {
             const next = new Set(current)
             if (Object.keys(channel.presenceState()).length) next.add(friend.id)
             else next.delete(friend.id)
             return next
           })
-        }).subscribe()
+          setPresenceUnknown((current) => {
+            const next = new Set(current)
+            next.delete(friend.id)
+            return next
+          })
+        }).subscribe((status) => {
+          if (cancelled || (status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT' && status !== 'CLOSED')) return
+          setOnline((current) => {
+            const next = new Set(current)
+            next.delete(friend.id)
+            return next
+          })
+          setPresenceUnknown((current) => new Set(current).add(friend.id))
+        })
       return channel
     })
     return () => {
+      cancelled = true
       for (const channel of channels) void client.removeChannel(channel)
       setOnline((current) => {
+        const next = new Set(current)
+        for (const friend of friends) next.delete(friend.id)
+        return next
+      })
+      setPresenceUnknown((current) => {
         const next = new Set(current)
         for (const friend of friends) next.delete(friend.id)
         return next
@@ -1046,6 +1085,7 @@ export default function Messenger() {
 
   return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}`}><aside className="sidebar">
     <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти сообщения" aria-label="Найти сообщения" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button><button className="icon-button" title="Добавить друга" aria-label="Добавить друга" onClick={() => setDialog('friends')}><Plus size={16} /></button><span className="network-status" title={connected ? 'Подключено' : 'Нет подключения'}>{connected ? <Wifi size={14} /> : <WifiOff size={14} />}</span></div></div>
+    {presenceUnknown.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
     <label className="search-box"><Search size={15} /><input placeholder="Поиск чатов и людей…" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
     <nav className="chat-category-tabs" aria-label="Фильтр переписок">
       <button className={section === 'chats' && chatFilter === 'all' ? 'selected' : ''} onClick={() => setChatCategory('all')}>Все</button>
