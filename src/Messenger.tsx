@@ -92,6 +92,7 @@ export default function Messenger() {
   const localStream = useRef<MediaStream | null>(null)
   const callRef = useRef<{ id: string; peer: string } | null>(null)
   const callBusy = useRef(false)
+  const turnFailure = useRef('')
   const pendingOffer = useRef<PendingOffer | null>(null)
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const callTimeout = useRef<number | undefined>(undefined)
@@ -504,9 +505,32 @@ export default function Messenger() {
 
   async function turnServers(): Promise<RTCIceServer[]> {
     const fallback: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }]
-    if (!client) return fallback
+    turnFailure.current = ''
+    if (!client) {
+      turnFailure.current = 'Supabase не настроен'
+      return fallback
+    }
     const { data, error: failure } = await client.functions.invoke('turn-credentials')
-    if (failure || !data?.iceServers?.length) { setNotice('TURN не настроен: звонок попробует прямое соединение STUN.'); return fallback }
+    if (failure) {
+      let reason = failure.message
+      const context = (failure as Error & { context?: unknown }).context
+      if (context instanceof Response) {
+        try {
+          const body: unknown = await context.clone().json()
+          if (typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string') reason = body.error
+        } catch {
+          reason = `${reason} (HTTP ${context.status})`
+        }
+      }
+      turnFailure.current = reason
+      setNotice(`TURN не выдал настройки: ${reason}. Звонок попробует прямое соединение STUN.`)
+      return fallback
+    }
+    if (!data?.iceServers?.length) {
+      turnFailure.current = 'Supabase Function не вернула ICE-серверы'
+      setNotice(`TURN не выдал настройки: ${turnFailure.current}. Звонок попробует прямое соединение STUN.`)
+      return fallback
+    }
     return [...fallback, ...data.iceServers] as RTCIceServer[]
   }
 
@@ -523,7 +547,10 @@ export default function Messenger() {
       if (peer.connectionState === 'connected') setCallPhase('connected')
       if (peer.connectionState === 'failed') {
         void finishCall(false)
-        setNotice('Не удалось установить аудиосоединение. Без TURN прямое соединение может быть заблокировано сетью; попробуйте другую сеть или настройте TURN.')
+        const detail = turnFailure.current
+          ? ` TURN недоступен: ${turnFailure.current}.`
+          : ' TURN credentials получены, но соединение не прошло ICE-проверку; возможно, TURN-провайдер или сеть блокирует выбранный маршрут.'
+        setNotice(`Не удалось установить аудиосоединение.${detail}`)
       }
     }
     for (const track of localStream.current?.getTracks() ?? []) peer.addTrack(track, localStream.current!)
