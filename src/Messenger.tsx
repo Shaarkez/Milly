@@ -274,10 +274,12 @@ export default function Messenger() {
     }).subscribe((status, failure) => {
       if (status === 'SUBSCRIBED') {
         if (messageRefresh) { window.clearInterval(messageRefresh); messageRefresh = undefined }
+        setError((current) => current.startsWith('Realtime сообщений отключён:') || current.startsWith('Realtime сообщений недоступен.') ? '' : current)
+        setNotice((current) => current.startsWith('Realtime сообщений проверяются автоматически') ? '' : current)
         void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-        setError(failure instanceof Error ? `Realtime сообщений отключён: ${failure.message}` : 'Realtime сообщений недоступен. Проверяем новые сообщения автоматически.')
+        setNotice(failure instanceof Error ? `Realtime сообщений проверяются автоматически. Причина: ${failure.message}` : 'Realtime сообщений проверяются автоматически с резервным обновлением.')
         if (!messageRefresh) messageRefresh = window.setInterval(() => { void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) }) }, 2500)
       }
     })
@@ -290,8 +292,14 @@ export default function Messenger() {
 
   useEffect(() => {
     if (!client || !user) return
-    const channel = client.channel(`calls:${user.id}`).on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `to_uid=eq.${user.id}` }, async ({ new: raw }) => {
-      const signal = raw as CallSignal
+    let cancelled = false
+    let pollTimer: number | undefined
+    let polling = false
+    const processedSignals = new Set<number>()
+    const listenFrom = new Date().toISOString()
+    const processSignal = async (signal: CallSignal) => {
+      if (cancelled || processedSignals.has(signal.id)) return
+      processedSignals.add(signal.id)
       if (signal.kind === 'offer') {
         if (callBusy.current) { await client.from('call_signals').insert({ call_id: signal.call_id, from_uid: user.id, to_uid: signal.from_uid, kind: 'reject', payload: null }); return }
         callBusy.current = true; pendingOffer.current = { callId: signal.call_id, from: signal.from_uid, offer: signal.payload as RTCSessionDescriptionInit }
@@ -307,8 +315,48 @@ export default function Messenger() {
           else pendingCandidates.current.push(signal.payload as RTCIceCandidateInit)
         } else if (signal.kind === 'reject' || signal.kind === 'hangup') { await finishCall(false); setNotice(signal.kind === 'reject' ? 'Собеседник не смог ответить.' : 'Звонок завершён.') }
       }
-    }).subscribe()
-    return () => { void client.removeChannel(channel) }
+    }
+    const pollSignals = async () => {
+      if (cancelled || polling) return
+      polling = true
+      try {
+        const { data, error: failure } = await client.from('call_signals')
+          .select('id,call_id,from_uid,to_uid,kind,payload')
+          .eq('to_uid', user.id)
+          .gte('created_at', listenFrom)
+          .order('id', { ascending: true })
+          .limit(100)
+        if (failure) throw failure
+        for (const raw of data ?? []) await processSignal(raw as CallSignal)
+      } catch (caught) {
+        if (!cancelled) setError(`Не удалось проверить сигналы звонка: ${readableError(caught)}`)
+      } finally {
+        polling = false
+      }
+    }
+    const startPolling = () => {
+      if (pollTimer) return
+      void pollSignals()
+      pollTimer = window.setInterval(() => void pollSignals(), 1200)
+    }
+    const channel = client.channel(`calls:${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `to_uid=eq.${user.id}` }, ({ new: raw }) => {
+        void processSignal(raw as CallSignal).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
+      })
+      .subscribe((status, failure) => {
+        if (status === 'SUBSCRIBED') {
+          if (pollTimer) { window.clearInterval(pollTimer); pollTimer = undefined }
+          setNotice((current) => current.startsWith('Realtime звонков недоступен') ? '' : current)
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          setNotice(failure instanceof Error ? `Realtime звонков недоступен (${failure.message}); включена резервная проверка.` : 'Realtime звонков недоступен; включена резервная проверка.')
+          startPolling()
+        }
+      })
+    return () => {
+      cancelled = true
+      if (pollTimer) window.clearInterval(pollTimer)
+      void client.removeChannel(channel)
+    }
   }, [client, user?.id])
 
   useEffect(() => {

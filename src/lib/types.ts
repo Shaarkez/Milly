@@ -36,7 +36,7 @@ export type FriendRequest = {
 }
 
 export type CallSignal = {
-  id: string
+  id: number
   call_id: string
   from_uid: string
   to_uid: string
