@@ -1,6 +1,6 @@
 import { Fragment, lazy, Suspense, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowLeft, AtSign, BadgeCheck, CalendarDays, Check, CheckCheck, CircleHelp, Copy, Hash, ImagePlus, LoaderCircle, LogOut, MessageCircle, Mic, MicOff, MoreHorizontal, Phone, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Users, Video, VideoOff, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react'
+import { ArrowLeft, AtSign, BadgeCheck, CalendarDays, Check, CheckCheck, CircleHelp, Copy, Hash, ImagePlus, LoaderCircle, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MoreHorizontal, Phone, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Users, Video, VideoOff, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react'
 import { isSupabaseConfigured, pageSize, readableError, supabase } from './lib/supabase'
 import type { CallSignal, Conversation, FriendRequest, Message, MessageReaction, Profile } from './lib/types'
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
@@ -102,6 +102,7 @@ export default function Messenger() {
   const [connected, setConnected] = useState(navigator.onLine)
   const [sending, setSending] = useState(false)
   const [callPhase, setCallPhase] = useState<CallPhase>('idle')
+  const [callMinimized, setCallMinimized] = useState(false)
   const [callDuration, setCallDuration] = useState(0)
   const [muted, setMuted] = useState(false)
   const [remoteVolume, setRemoteVolume] = useState(0.8)
@@ -127,6 +128,7 @@ export default function Messenger() {
   const callRef = useRef<{ id: string; peer: string } | null>(null)
   const callBusy = useRef(false)
   const turnFailure = useRef('')
+  const turnTransportWarning = useRef('')
   const pendingOffer = useRef<PendingOffer | null>(null)
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const callTimeout = useRef<number | undefined>(undefined)
@@ -485,7 +487,7 @@ export default function Messenger() {
         setCameraEnabled(true)
         pendingCandidates.current = earlyCandidates.get(signal.call_id) ?? []
         earlyCandidates.delete(signal.call_id)
-        setIncomingFrom(friendsRef.current.find((friend) => friend.id === signal.from_uid)?.display_name ?? 'Ваш друг'); setCallPhase('incoming')
+        setIncomingFrom(friendsRef.current.find((friend) => friend.id === signal.from_uid)?.display_name ?? 'Ваш друг'); setCallMinimized(false); setCallPhase('incoming')
         window.clearTimeout(callTimeout.current)
         callTimeout.current = window.setTimeout(() => { if (pendingOffer.current?.callId === signal.call_id) { void finishCall(true); setNotice('Входящий звонок пропущен.') } }, 45000)
       } else if (callRef.current?.id === signal.call_id || pendingOffer.current?.callId === signal.call_id) {
@@ -710,6 +712,11 @@ export default function Messenger() {
       return fallback
     }
     const servers = data.iceServers as RTCIceServer[]
+    const urls = servers.flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls])
+    const hasTcpRelay = urls.some((url) => url.startsWith('turns:') || (url.startsWith('turn:') && /transport=tcp/i.test(url)))
+    turnTransportWarning.current = hasTcpRelay
+      ? ''
+      : 'Провайдер выдал только UDP TURN. Если сеть блокирует UDP, звонок без VPN не пройдёт; нужен TURN/TLS или TURN/TCP (обычно порт 443).'
     const transportRank = (url: string) => {
       if (url.startsWith('turns:')) return 0
       if (url.startsWith('turn:') && /transport=tcp/i.test(url)) return 1
@@ -738,15 +745,21 @@ export default function Messenger() {
         if (report.type !== 'candidate-pair') return false
         const pair = report as RTCStats & { selected?: boolean; nominated?: boolean; state?: string }
         return pair.selected === true || (pair.nominated === true && pair.state === 'succeeded')
-      }) as (RTCStats & { localCandidateId?: string; remoteCandidateId?: string }) | undefined
-      if (selectedPair) {
-        const local = selectedPair.localCandidateId
-          ? stats.get(selectedPair.localCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
+      }) as (RTCStats & { state?: string; localCandidateId?: string; remoteCandidateId?: string }) | undefined
+      const candidatePair = selectedPair ?? reports.find((report) => {
+        if (report.type !== 'candidate-pair') return false
+        const pair = report as RTCStats & { state?: string; localCandidateId?: string; remoteCandidateId?: string }
+        return pair.state === 'failed' && Boolean(pair.localCandidateId && pair.remoteCandidateId)
+      }) as (RTCStats & { state?: string; localCandidateId?: string; remoteCandidateId?: string }) | undefined
+      if (candidatePair) {
+        const local = candidatePair.localCandidateId
+          ? stats.get(candidatePair.localCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
           : undefined
-        const remote = selectedPair.remoteCandidateId
-          ? stats.get(selectedPair.remoteCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
+        const remote = candidatePair.remoteCandidateId
+          ? stats.get(candidatePair.remoteCandidateId) as RTCStats & { candidateType?: string; protocol?: string }
           : undefined
-        route = `Маршрут: ${local?.candidateType ?? 'unknown'}/${local?.protocol ?? '?'} → ${remote?.candidateType ?? 'unknown'}/${remote?.protocol ?? '?'}.`
+        const failed = candidatePair.state === 'failed' ? 'Не прошла ICE-пара' : 'Маршрут'
+        route = `${failed}: ${local?.candidateType ?? 'unknown'}/${local?.protocol ?? '?'} → ${remote?.candidateType ?? 'unknown'}/${remote?.protocol ?? '?'}.`
       } else {
         const localTypes = [...new Set(reports
           .filter((report) => report.type === 'local-candidate')
@@ -762,7 +775,8 @@ export default function Messenger() {
       route = 'Не удалось прочитать ICE-статистику браузера.'
     }
     const serverErrors = [...errors]
-    return `${route}${serverErrors.length ? ` Ошибки ICE-серверов: ${serverErrors.join('; ')}.` : ' Ошибок ICE-серверов браузер не сообщил.'}`
+    const transportWarning = turnTransportWarning.current ? ` ${turnTransportWarning.current}` : ''
+    return `${route}${serverErrors.length ? ` Ошибки ICE-серверов: ${serverErrors.join('; ')}.` : ' Ошибок ICE-серверов браузер не сообщил.'}${transportWarning}`
   }
 
   function bindPeer(peer: RTCPeerConnection, callId: string, peerId: string) {
@@ -805,7 +819,7 @@ export default function Messenger() {
 
   async function startCall(friend: Profile, withVideo = false) {
     if (!client || !user || callBusy.current) return
-    callBusy.current = true; const callId = crypto.randomUUID(); callRef.current = { id: callId, peer: friend.id }; setCallPhase('calling'); setCallDuration(0); setError(''); setVideoCall(withVideo); setCameraEnabled(withVideo); setLocalMedia(null); setRemoteMedia(null)
+    callBusy.current = true; const callId = crypto.randomUUID(); callRef.current = { id: callId, peer: friend.id }; setCallMinimized(false); setCallPhase('calling'); setCallDuration(0); setError(''); setVideoCall(withVideo); setCameraEnabled(withVideo); setLocalMedia(null); setRemoteMedia(null)
     try {
       localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo })
       setLocalMedia(localStream.current)
@@ -823,7 +837,7 @@ export default function Messenger() {
     if (!client || !user || !pendingOffer.current) return
     const incoming = pendingOffer.current
     const acceptVideo = Boolean(incoming.offer.sdp?.includes('m=video'))
-    callRef.current = { id: incoming.callId, peer: incoming.from }; setCallPhase('connecting')
+    callRef.current = { id: incoming.callId, peer: incoming.from }; setCallMinimized(false); setCallPhase('connecting')
     try {
       setVideoCall(acceptVideo); setCameraEnabled(acceptVideo); setLocalMedia(null); setRemoteMedia(null)
       localStream.current = await navigator.mediaDevices.getUserMedia({ audio: true, video: acceptVideo })
@@ -851,7 +865,7 @@ export default function Messenger() {
     if (audioRef.current) audioRef.current.srcObject = null
     if (localVideoRef.current) localVideoRef.current.srcObject = null
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-    callRef.current = null; pendingOffer.current = null; pendingCandidates.current = []; callBusy.current = false; setCallPhase('idle'); setMuted(false); setCallDuration(0); setVideoCall(false); setCameraEnabled(true); setLocalMedia(null); setRemoteMedia(null)
+    callRef.current = null; pendingOffer.current = null; pendingCandidates.current = []; callBusy.current = false; setCallMinimized(false); setCallPhase('idle'); setMuted(false); setCallDuration(0); setVideoCall(false); setCameraEnabled(true); setLocalMedia(null); setRemoteMedia(null)
   }
 
   function toggleCamera() {
@@ -954,7 +968,7 @@ export default function Messenger() {
   {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <ShieldCheck className="verified-mark" size={17} />}</strong><span>@{profile.username}</span>{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div><form className="profile-edit" onSubmit={(event) => void saveName(event)}><div className="profile-section-title">Редактор профиля</div><div className="profile-editor-preview"><Avatar name={profileDraft.displayName || profile.display_name} image={ownAvatar} /><span><strong>{profileDraft.displayName || profile.display_name}</strong><small>@{profileDraft.username || profile.username}</small></span></div><label>Имя<input name="display_name" value={profileDraft.displayName} onChange={(event) => setProfileDraft((draft) => ({ ...draft, displayName: event.target.value }))} maxLength={40} required /></label><label>Username<input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></label><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ displayName: profile.display_name, username: profile.username }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
   {friendToRemove && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !friendBusy) setFriendToRemove(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="remove-friend-title">Удалить из друзей?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={friendBusy} onClick={() => setFriendToRemove(null)}><X size={18} /></button></div><p>{friendToRemove.display_name} исчезнет из списка друзей. История переписки останется.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={friendBusy} onClick={() => setFriendToRemove(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={friendBusy} onClick={() => void removeFriend(friendToRemove)}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : null}Удалить из друзей</button></div></section></div>}
   {appearanceOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAppearanceOpen(false) }}><section className="modal appearance-modal" role="dialog" aria-modal="true" aria-labelledby="appearance-title"><div className="modal-heading"><div><span className="form-kicker">НАСТРОЙКИ</span><h2 id="appearance-title">Оформление</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setAppearanceOpen(false)}><X size={18} /></button></div><p>Выберите тему для Milly. Настройка сохраняется на этом устройстве.</p><button className={`theme-option${lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(true)}><span className="theme-preview theme-preview-light" /><span><strong>Светло-голубая</strong><small>Светлый фон и голубые акценты</small></span><span className="theme-radio" /></button><button className={`theme-option${!lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(false)}><span className="theme-preview theme-preview-dark" /><span><strong>Тёмная</strong><small>Спокойные тёмные поверхности</small></span><span className="theme-radio" /></button></section></div>}
-  {callPhase !== 'idle' && <CallWindow phase={callPhase} peerName={callPhase === 'incoming' ? incomingFrom : friends.find((friend) => friend.id === callRef.current?.peer)?.display_name ?? 'Друг'} duration={callDuration} muted={muted} remoteVolume={remoteVolume} onRemoteVolumeChange={setRemoteVolume} videoCall={videoCall} cameraEnabled={cameraEnabled} localMedia={localMedia} remoteMedia={remoteMedia} onAccept={() => void acceptCall()} onMute={() => { const next = !muted; setMuted(next); localStream.current?.getAudioTracks().forEach((track) => { track.enabled = !next }) }} onCamera={toggleCamera} onEnd={() => callPhase === 'incoming' ? void rejectIncomingCall() : void finishCall()} />}
+  {callPhase !== 'idle' && <CallWindow phase={callPhase} minimized={callMinimized} peerName={callPhase === 'incoming' ? incomingFrom : friends.find((friend) => friend.id === callRef.current?.peer)?.display_name ?? 'Друг'} duration={callDuration} muted={muted} remoteVolume={remoteVolume} onRemoteVolumeChange={setRemoteVolume} videoCall={videoCall} cameraEnabled={cameraEnabled} localMedia={localMedia} remoteMedia={remoteMedia} onAccept={() => void acceptCall()} onMute={() => { const next = !muted; setMuted(next); localStream.current?.getAudioTracks().forEach((track) => { track.enabled = !next }) }} onCamera={toggleCamera} onMinimize={() => setCallMinimized(true)} onRestore={() => setCallMinimized(false)} onEnd={() => callPhase === 'incoming' ? void rejectIncomingCall() : void finishCall()} />}
   <audio ref={audioRef} autoPlay /></main>
 }
 
@@ -974,7 +988,7 @@ function Toast({ message, error = false, onClose }: { message: string; error?: b
   return <div className={`toast${error ? ' toast-error' : ''}`} role={error ? 'alert' : 'status'}><span>{message}</span><button aria-label="Закрыть" onClick={onClose}><X size={15} /></button></div>
 }
 
-function CallWindow({ phase, peerName, duration, muted, remoteVolume, onRemoteVolumeChange, videoCall, cameraEnabled, localMedia, remoteMedia, onAccept, onMute, onCamera, onEnd }: { phase: CallPhase; peerName: string; duration: number; muted: boolean; remoteVolume: number; onRemoteVolumeChange: (volume: number) => void; videoCall: boolean; cameraEnabled: boolean; localMedia: MediaStream | null; remoteMedia: MediaStream | null; onAccept: () => void; onMute: () => void; onCamera: () => void; onEnd: () => void }) {
+function CallWindow({ phase, minimized, peerName, duration, muted, remoteVolume, onRemoteVolumeChange, videoCall, cameraEnabled, localMedia, remoteMedia, onAccept, onMute, onCamera, onMinimize, onRestore, onEnd }: { phase: CallPhase; minimized: boolean; peerName: string; duration: number; muted: boolean; remoteVolume: number; onRemoteVolumeChange: (volume: number) => void; videoCall: boolean; cameraEnabled: boolean; localMedia: MediaStream | null; remoteMedia: MediaStream | null; onAccept: () => void; onMute: () => void; onCamera: () => void; onMinimize: () => void; onRestore: () => void; onEnd: () => void }) {
   const localVideo = useRef<HTMLVideoElement>(null)
   const remoteVideo = useRef<HTMLVideoElement>(null)
   useEffect(() => {
@@ -982,5 +996,14 @@ function CallWindow({ phase, peerName, duration, muted, remoteVolume, onRemoteVo
     if (remoteVideo.current) remoteVideo.current.srcObject = remoteMedia
   }, [localMedia, remoteMedia, videoCall, cameraEnabled])
   const label = phase === 'incoming' ? 'ВХОДЯЩИЙ ЗВОНОК' : phase === 'calling' ? 'ВЫЗЫВАЕМ' : phase === 'connecting' ? 'СОЕДИНЕНИЕ' : 'РАЗГОВОР'
-  return <div className="call-overlay"><div className={`call-card${videoCall ? ' video-call-card' : ''}`}><button className="call-close" aria-label="Завершить звонок" onClick={onEnd}><X size={17} /></button>{videoCall ? <div className="call-video-stage"><div className="remote-video-frame">{remoteMedia ? <video ref={remoteVideo} autoPlay playsInline muted /> : <Avatar name={peerName} large />}</div><div className="local-video-frame">{cameraEnabled && localMedia ? <video ref={localVideo} autoPlay playsInline muted /> : <span>Камера выключена</span>}</div></div> : <Avatar name={peerName} large />}<span className="call-state">{videoCall ? `${label} · ВИДЕО` : label}</span><h2>{peerName}</h2><p>{phase === 'connected' ? `${String(Math.floor(duration / 60)).padStart(2, '0')}:${String(duration % 60).padStart(2, '0')}` : phase === 'incoming' ? 'Хочет поговорить с вами' : videoCall ? 'Видеозвонок Milly' : 'Голосовой звонок Milly'}</p>{(phase === 'connected' || phase === 'connecting') && <label className="call-volume" title="Громкость собеседника"><span>{remoteVolume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}</span><input aria-label="Громкость собеседника" type="range" min="0" max="1" step="0.01" value={remoteVolume} onChange={(event) => onRemoteVolumeChange(Number(event.target.value))} /><output>{Math.round(remoteVolume * 100)}%</output></label>}<div className="call-actions">{phase === 'incoming' && <button className="accept-call" aria-label="Принять звонок" onClick={onAccept}><Phone size={20} /></button>}{(phase === 'connected' || phase === 'connecting') && <><button className={`mute-call${muted ? ' muted' : ''}`} aria-label={muted ? 'Включить микрофон' : 'Выключить микрофон'} aria-pressed={muted} title={muted ? 'Включить микрофон' : 'Выключить микрофон'} onClick={onMute}>{muted ? <MicOff size={19} /> : <Mic size={19} />}</button>{videoCall && <button className={`camera-call${cameraEnabled ? '' : ' muted'}`} aria-label={cameraEnabled ? 'Выключить камеру' : 'Включить камеру'} onClick={onCamera}>{cameraEnabled ? <Video size={18} /> : <VideoOff size={18} />}</button>}</>}<button className="end-call" aria-label={phase === 'incoming' ? 'Отклонить звонок' : 'Завершить звонок'} onClick={onEnd}><Phone size={20} /></button></div><span className="call-encryption-note"><ShieldCheck size={13} /> Прямой WebRTC-звонок · не E2EE</span></div></div>
+  if (minimized) return <div className="call-mini" role="region" aria-label="Свернутый звонок">
+    <button className="call-mini-identity" onClick={onRestore} title="Развернуть звонок">
+      <Avatar name={peerName} />
+      <span><strong>{peerName}</strong><small>{phase === 'connected' ? `${String(Math.floor(duration / 60)).padStart(2, '0')}:${String(duration % 60).padStart(2, '0')}` : label}</small></span>
+    </button>
+    <button className={`call-mini-control${muted ? ' muted' : ''}`} onClick={onMute} aria-label={muted ? 'Включить микрофон' : 'Выключить микрофон'} title={muted ? 'Включить микрофон' : 'Выключить микрофон'}>{muted ? <MicOff size={17} /> : <Mic size={17} />}</button>
+    <button className="call-mini-control" onClick={onRestore} aria-label="Развернуть звонок" title="Развернуть звонок"><Maximize2 size={17} /></button>
+    <button className="call-mini-control call-mini-end" onClick={onEnd} aria-label="Завершить звонок" title="Завершить звонок"><Phone size={17} /></button>
+  </div>
+  return <div className="call-overlay"><div className={`call-card${videoCall ? ' video-call-card' : ''}`}>{phase !== 'incoming' && <button className="call-minimize" aria-label="Свернуть звонок" title="Свернуть звонок" onClick={onMinimize}><Minimize2 size={17} /></button>}<button className="call-close" aria-label="Завершить звонок" onClick={onEnd}><X size={17} /></button>{videoCall ? <div className="call-video-stage"><div className="remote-video-frame">{remoteMedia ? <video ref={remoteVideo} autoPlay playsInline muted /> : <Avatar name={peerName} large />}</div><div className="local-video-frame">{cameraEnabled && localMedia ? <video ref={localVideo} autoPlay playsInline muted /> : <span>Камера выключена</span>}</div></div> : <Avatar name={peerName} large />}<span className="call-state">{videoCall ? `${label} · ВИДЕО` : label}</span><h2>{peerName}</h2><p>{phase === 'connected' ? `${String(Math.floor(duration / 60)).padStart(2, '0')}:${String(duration % 60).padStart(2, '0')}` : phase === 'incoming' ? 'Хочет поговорить с вами' : videoCall ? 'Видеозвонок Milly' : 'Голосовой звонок Milly'}</p>{(phase === 'connected' || phase === 'connecting') && <label className="call-volume" title="Громкость собеседника"><span>{remoteVolume === 0 ? <VolumeX size={17} /> : <Volume2 size={17} />}</span><input aria-label="Громкость собеседника" type="range" min="0" max="1" step="0.01" value={remoteVolume} onChange={(event) => onRemoteVolumeChange(Number(event.target.value))} /><output>{Math.round(remoteVolume * 100)}%</output></label>}<div className="call-actions">{phase === 'incoming' && <button className="accept-call" aria-label="Принять звонок" onClick={onAccept}><Phone size={20} /></button>}{(phase === 'connected' || phase === 'connecting') && <><button className={`mute-call${muted ? ' muted' : ''}`} aria-label={muted ? 'Включить микрофон' : 'Выключить микрофон'} aria-pressed={muted} title={muted ? 'Включить микрофон' : 'Выключить микрофон'} onClick={onMute}>{muted ? <MicOff size={19} /> : <Mic size={19} />}</button>{videoCall && <button className={`camera-call${cameraEnabled ? '' : ' muted'}`} aria-label={cameraEnabled ? 'Выключить камеру' : 'Включить камеру'} onClick={onCamera}>{cameraEnabled ? <Video size={18} /> : <VideoOff size={18} />}</button>}</>}<button className="end-call" aria-label={phase === 'incoming' ? 'Отклонить звонок' : 'Завершить звонок'} onClick={onEnd}><Phone size={20} /></button></div><span className="call-encryption-note"><ShieldCheck size={13} /> Прямой WebRTC-звонок · не E2EE</span></div></div>
 }

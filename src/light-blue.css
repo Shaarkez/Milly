@@ -265,6 +265,10 @@ body.milly-dark .theme-option strong { color: #dce4ec; }
 body.milly-dark .theme-option.selected { background: #293d50; border-color: #4a8fbe; }
 body.milly-dark .video-call-card { background: #222930; }
 body.milly-dark .call-volume, body.milly-dark .call-volume output { color: #a7b7c5; }
+body.milly-dark .call-mini { color: #dce4ec; background: #222930; border-color: #36414c; }
+body.milly-dark .call-mini-identity strong { color: #e0e7ef; }
+body.milly-dark .call-mini-identity small { color: #a0adbb; }
+body.milly-dark .call-mini-control { color: #c2cfdb; background: #2a333c; }
 
 .auth-page { color: #2a415a; background: #f5f9fe; }
 .auth-aside { color: #fff; background: linear-gradient(145deg, #5fa9e7, #84c5f3 54%, #b4dcf8); }
@@ -288,6 +292,8 @@ body.milly-dark .call-volume, body.milly-dark .call-volume output { color: #a7b7
 .call-card p, .call-card span { color: #7b8da2; }
 .call-card .icon-button { background: #f1f7fc; }
 .call-close { color: #74869a; background: #f0f6fc; }
+.call-minimize { position: absolute; top: 10px; right: 48px; display: grid; width: 31px; height: 31px; place-items: center; color: #74869a; background: #f0f6fc; border: 0; border-radius: 50%; cursor: pointer; }
+.call-minimize:hover, .call-close:hover { color: #347fbd; background: #e4f2fe; }
 .call-state { color: #438dca; }
 .accept-call { background: #55aa7e; }
 .end-call { background: #d96470; }
@@ -300,6 +306,16 @@ body.milly-dark .call-volume, body.milly-dark .call-volume output { color: #a7b7
 .call-volume output { min-width: 35px; color: #788ba0; text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; }
 .call-actions .mute-call { display: grid; place-items: center; }
 .call-actions .mute-call[aria-pressed="true"] { box-shadow: 0 0 0 2px #e3a8ae; }
+.call-mini { position: fixed; z-index: 10; right: 18px; bottom: 18px; display: flex; align-items: center; width: min(390px, calc(100vw - 24px)); min-height: 68px; gap: 8px; padding: 9px 11px; color: #30465f; background: #fff; border: 1px solid #dce8f3; border-radius: 14px; box-shadow: 0 12px 40px #203a552d; animation: admin-enter .16s ease-out both; }
+.call-mini-identity { display: flex; flex: 1; align-items: center; min-width: 0; gap: 9px; padding: 0; text-align: left; background: transparent; border: 0; cursor: pointer; }
+.call-mini-identity .avatar { flex: 0 0 38px; width: 38px; height: 38px; }
+.call-mini-identity>span:last-child { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.call-mini-identity strong { overflow: hidden; color: #30465f; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.call-mini-identity small { color: #71859b; font-size: 9px; }
+.call-mini-control { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; color: #54708c; background: #edf5fc; border: 0; border-radius: 50%; cursor: pointer; }
+.call-mini-control:hover { color: #2679bf; background: #e2f1ff; }
+.call-mini-control.muted { color: #a7525c; background: #f8e9eb; }
+.call-mini-control.call-mini-end { color: #fff; background: #d96470; transform: rotate(136deg); }
 .channel-loading { color: #74879c; }
 .channels-workspace { color: #334960; }
 .spaces-rail, .channel-list-panel { color: #536982; background: #fff; border-color: #e3ebf3; }
