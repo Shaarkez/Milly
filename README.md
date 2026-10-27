@@ -19,7 +19,7 @@
 
 - Node.js 20.19+ и npm.
 - Проект Supabase.
-- Для надёжных звонков в разных сетях — доступный из интернета сервер coturn с публичным адресом и открытыми UDP/TCP-портами.
+- Для надёжных звонков в разных сетях — TURN-сервис. Можно использовать coturn на своём сервере или облачный TURN-провайдер; без TURN прямое соединение STUN может не пройти через NAT и firewall.
 
 ## Локальный запуск
 
@@ -56,7 +56,20 @@ Vitest проверяет правила регистрации, формат ю
 
 ## TURN и звонки
 
-STUN fallback включён, но не проходит через все NAT и корпоративные файрволы. Для надёжных звонков нужен coturn с REST-аутентификацией общим секретом. Пример основы конфигурации сервера:
+STUN fallback включён, но не проходит через все NAT и корпоративные файрволы. Для звонков без собственного VPS можно использовать [Metered Open Relay](https://www.metered.ca/tools/openrelay/); проверьте актуальные квоты и условия бесплатного тарифа у провайдера. Создайте аккаунт и возьмите TURN credentials endpoint вида `https://ВАШ_ПРОЕКТ.metered.live/api/v1/turn/credentials` и API key в панели Metered.
+
+Сохраните URL и API key только в Supabase Edge Function secrets, затем задеплойте функцию:
+
+```powershell
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase secrets set TURN_CREDENTIALS_URL="https://ВАШ_ПРОЕКТ.metered.live/api/v1/turn/credentials" TURN_CREDENTIALS_API_KEY="ВАШ_API_KEY"
+npx supabase functions deploy turn-credentials
+```
+
+Функция запрашивает короткоживущие TURN credentials у провайдера на серверной стороне; API key не передаётся браузеру. Не помещайте его в `.env.local`, Cloudflare Pages или GitHub.
+
+Альтернативно настройте coturn с REST-аутентификацией общим секретом. Пример основы конфигурации сервера:
 
 ```text
 realm=turn.example.com

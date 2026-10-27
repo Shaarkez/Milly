@@ -14,6 +14,8 @@ Deno.serve(async (request) => {
   const authorization = request.headers.get('Authorization')
   const projectUrl = Deno.env.get('SUPABASE_URL')
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
+  const credentialsUrl = Deno.env.get('TURN_CREDENTIALS_URL')
+  const credentialsApiKey = Deno.env.get('TURN_CREDENTIALS_API_KEY')
   const sharedSecret = Deno.env.get('TURN_SHARED_SECRET')
   const turnUrls = Deno.env.get('TURN_URLS')?.split(',').map((value) => value.trim()).filter(Boolean)
 
@@ -25,6 +27,41 @@ Deno.serve(async (request) => {
   })
   const { data, error } = await authClient.auth.getUser()
   if (error || !data.user) return reply({ error: 'Unauthorized' }, 401)
+
+  if (credentialsUrl || credentialsApiKey) {
+    if (!credentialsUrl || !credentialsApiKey) return reply({ error: 'TURN provider credentials are incomplete' }, 503)
+
+    let providerUrl: URL
+    try {
+      providerUrl = new URL(credentialsUrl)
+    } catch {
+      return reply({ error: 'TURN provider URL is invalid' }, 503)
+    }
+    if (providerUrl.protocol !== 'https:') return reply({ error: 'TURN provider URL must use HTTPS' }, 503)
+    providerUrl.searchParams.set('apiKey', credentialsApiKey)
+
+    let response: Response
+    try {
+      response = await fetch(providerUrl, { signal: AbortSignal.timeout(10000) })
+    } catch {
+      return reply({ error: 'TURN provider credentials request failed' }, 502)
+    }
+    if (!response.ok) return reply({ error: 'TURN provider credentials request failed' }, 502)
+
+    let iceServers: unknown
+    try {
+      iceServers = await response.json()
+    } catch {
+      return reply({ error: 'TURN provider returned invalid credentials' }, 502)
+    }
+    if (!Array.isArray(iceServers) || iceServers.length === 0 || !iceServers.every((server) =>
+      typeof server === 'object' && server !== null && 'urls' in server
+    )) {
+      return reply({ error: 'TURN provider returned invalid credentials' }, 502)
+    }
+    return reply({ iceServers }, 200)
+  }
+
   if (!sharedSecret || !turnUrls?.length) return reply({ error: 'TURN is not configured' }, 503)
 
   const ttl = Math.min(3600, Math.max(300, Number(Deno.env.get('TURN_TTL_SECONDS') || 900)))
