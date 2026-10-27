@@ -712,11 +712,32 @@ export default function Messenger() {
       return fallback
     }
     const servers = data.iceServers as RTCIceServer[]
+    const expandTurnTransports = (url: string) => {
+      if (!url.startsWith('turn:')) return [url]
+      const match = /^turn:([^?]+)(?:\?(.*))?$/i.exec(url)
+      if (!match) return [url]
+      const authority = match[1]
+      const parameters = new URLSearchParams(match[2] ?? '')
+      const transport = parameters.get('transport')?.toLowerCase()
+      const variants = [url]
+      if (transport !== 'tcp') {
+        const tcpParameters = new URLSearchParams(parameters)
+        tcpParameters.set('transport', 'tcp')
+        variants.push(`turn:${authority}?${tcpParameters.toString()}`)
+      }
+      if (/:(443|5349)$/i.test(authority) && !url.startsWith('turns:')) {
+        const tlsParameters = new URLSearchParams(parameters)
+        tlsParameters.set('transport', 'tcp')
+        variants.push(`turns:${authority}?${tlsParameters.toString()}`)
+      }
+      return variants
+    }
     const urls = servers.flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls])
-    const hasTcpRelay = urls.some((url) => url.startsWith('turns:') || (url.startsWith('turn:') && /transport=tcp/i.test(url)))
+    const expandedUrls = urls.flatMap(expandTurnTransports)
+    const hasTcpRelay = expandedUrls.some((url) => url.startsWith('turns:') || (url.startsWith('turn:') && /transport=tcp/i.test(url)))
     turnTransportWarning.current = hasTcpRelay
       ? ''
-      : 'Провайдер выдал только UDP TURN. Если сеть блокирует UDP, звонок без VPN не пройдёт; нужен TURN/TLS или TURN/TCP (обычно порт 443).'
+      : 'Не удалось подготовить TURN/TCP или TURN/TLS. Если сеть блокирует UDP, нужен доступный TURN endpoint с TCP/TLS (обычно порт 443).'
     const transportRank = (url: string) => {
       if (url.startsWith('turns:')) return 0
       if (url.startsWith('turn:') && /transport=tcp/i.test(url)) return 1
@@ -726,9 +747,8 @@ export default function Messenger() {
     return servers
       .map((server) => ({
         ...server,
-        urls: Array.isArray(server.urls)
-          ? [...server.urls].sort((a, b) => transportRank(a) - transportRank(b))
-          : server.urls,
+        urls: [...new Set((Array.isArray(server.urls) ? server.urls : [server.urls]).flatMap(expandTurnTransports))]
+          .sort((a, b) => transportRank(a) - transportRank(b)),
       }))
       .sort((a, b) => {
         const firstUrl = (urls: RTCIceServer['urls']) => Array.isArray(urls) ? urls[0] ?? '' : urls
