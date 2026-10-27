@@ -264,6 +264,7 @@ body.milly-dark .theme-option { color: #dce4ec; background: #222930; border-colo
 body.milly-dark .theme-option strong { color: #dce4ec; }
 body.milly-dark .theme-option.selected { background: #293d50; border-color: #4a8fbe; }
 body.milly-dark .video-call-card { background: #222930; }
+body.milly-dark .call-volume, body.milly-dark .call-volume output { color: #a7b7c5; }
 
 .auth-page { color: #2a415a; background: #f5f9fe; }
 .auth-aside { color: #fff; background: linear-gradient(145deg, #5fa9e7, #84c5f3 54%, #b4dcf8); }
@@ -293,6 +294,12 @@ body.milly-dark .video-call-card { background: #222930; }
 .mute-call { color: #54708c; background: #eaf3fb; }
 .mute-call.muted { color: #a7525c; background: #f8e9eb; }
 .call-encryption-note { color: #8393a6; }
+.call-volume { display: flex; align-items: center; width: min(100%, 300px); gap: 10px; margin: -7px 0 18px; color: #66809a; }
+.call-volume>span { display: grid; flex: none; place-items: center; }
+.call-volume input { width: 100%; accent-color: #579fda; cursor: pointer; }
+.call-volume output { min-width: 35px; color: #788ba0; text-align: right; font-size: 10px; font-variant-numeric: tabular-nums; }
+.call-actions .mute-call { display: grid; place-items: center; }
+.call-actions .mute-call[aria-pressed="true"] { box-shadow: 0 0 0 2px #e3a8ae; }
 .channel-loading { color: #74879c; }
 .channels-workspace { color: #334960; }
 .spaces-rail, .channel-list-panel { color: #536982; background: #fff; border-color: #e3ebf3; }
