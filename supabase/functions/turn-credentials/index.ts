@@ -43,10 +43,24 @@ Deno.serve(async (request) => {
     let response: Response
     try {
       response = await fetch(providerUrl, { signal: AbortSignal.timeout(10000) })
-    } catch {
-      return reply({ error: 'TURN provider credentials request failed' }, 502)
+    } catch (caught) {
+      const error = caught instanceof DOMException && caught.name === 'TimeoutError'
+        ? 'TURN provider request timed out'
+        : 'TURN provider could not be reached'
+      return reply({ error }, 502)
     }
-    if (!response.ok) return reply({ error: 'TURN provider credentials request failed' }, 502)
+    if (!response.ok) {
+      const error = response.status === 400
+        ? 'TURN provider rejected the request; check the credentials URL and API key format'
+        : response.status === 401 || response.status === 403
+          ? 'TURN provider rejected the API key; verify that it is the TURN credentials API key'
+          : response.status === 404
+            ? 'TURN credentials endpoint was not found; verify the Metered app name and URL'
+            : response.status === 429
+              ? 'TURN provider rate limit or free-tier quota was reached'
+              : `TURN provider returned HTTP ${response.status}`
+      return reply({ error }, 502)
+    }
 
     let iceServers: unknown
     try {
