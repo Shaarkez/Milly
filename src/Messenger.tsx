@@ -297,6 +297,7 @@ export default function Messenger() {
     let cancelled = false
     let pollTimer: number | undefined
     let polling = false
+    let signalCursor = 0
     const processedSignals = new Set<number>()
     const earlyCandidates = new Map<string, RTCIceCandidateInit[]>()
     const listenFrom = new Date().toISOString()
@@ -340,16 +341,22 @@ export default function Messenger() {
       if (cancelled || polling) return
       polling = true
       try {
-        const { data, error: failure } = await client.from('call_signals')
+        let query = client.from('call_signals')
           .select('id,call_id,from_uid,to_uid,kind,payload')
           .eq('to_uid', user.id)
           .gte('created_at', listenFrom)
           .order('id', { ascending: true })
           .limit(100)
+        if (signalCursor > 0) query = query.gt('id', signalCursor)
+        const { data, error: failure } = await query
         if (failure) throw failure
-        for (const raw of data ?? []) await processSignal(raw as CallSignal)
+        for (const raw of data ?? []) {
+          const signal = raw as CallSignal
+          signalCursor = Math.max(signalCursor, signal.id)
+          await processSignal(signal)
+        }
       } catch (caught) {
-        if (!cancelled) setError(`Не удалось проверить сигналы звонка: ${readableError(caught)}`)
+        if (!cancelled) setError((current) => current.startsWith('Не удалось проверить сигналы звонка:') ? current : `Не удалось проверить сигналы звонка: ${readableError(caught)}`)
       } finally {
         polling = false
       }
@@ -357,15 +364,15 @@ export default function Messenger() {
     const startPolling = () => {
       if (pollTimer) return
       void pollSignals()
-      pollTimer = window.setInterval(() => void pollSignals(), 1200)
+      pollTimer = window.setInterval(() => void pollSignals(), 1500)
     }
+    startPolling()
     const channel = client.channel(`calls:${user.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'call_signals', filter: `to_uid=eq.${user.id}` }, ({ new: raw }) => {
         void processSignal(raw as CallSignal).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
       })
       .subscribe((status, failure) => {
         if (status === 'SUBSCRIBED') {
-          if (pollTimer) { window.clearInterval(pollTimer); pollTimer = undefined }
           setNotice((current) => current.startsWith('Realtime звонков недоступен') ? '' : current)
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           setNotice(failure instanceof Error ? `Realtime звонков недоступен (${failure.message}); включена резервная проверка.` : 'Realtime звонков недоступен; включена резервная проверка.')
