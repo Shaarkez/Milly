@@ -6,6 +6,7 @@ export type Profile = {
   display_name: string
   avatar_path: string | null
   avatar_url?: string
+  created_at?: string
   is_verified?: boolean
   registration_date_override?: string | null
   aliases?: string[]

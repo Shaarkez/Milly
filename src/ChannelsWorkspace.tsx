@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient, User } from '@supabase/supabase-js'
-import { ArrowLeft, Hash, LoaderCircle, MessageSquare, Plus, Send, Users, X } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, Hash, LoaderCircle, MessageSquare, Plus, Send, Users, X } from 'lucide-react'
 import type { Profile } from './lib/types'
 import { readableError } from './lib/supabase'
 
-type Space = { id: string; name: string; owner_id: string; role: 'owner' | 'member'; display_member_count_override: number | null }
-type SpaceChannel = { id: string; space_id: string; name: string; created_at: string }
+type Space = { id: string; name: string; description: string; owner_id: string; role: 'owner' | 'member'; display_member_count_override: number | null }
+type SpaceChannel = { id: string; space_id: string; name: string; description: string; created_at: string }
 type ChannelMessage = { id: string; channel_id: string; sender_id: string; body: string; created_at: string }
 type Reaction = { id: number; channel_message_id: string; user_id: string; emoji: string }
 type Props = {
@@ -71,8 +71,8 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
 
     const ids = membershipRows.map((row) => row.space_id)
     const [{ data: spaceRows, error: spacesError }, { data: channelRows, error: channelsError }, { data: allMembers, error: membersError }] = await Promise.all([
-      client.from('private_spaces').select('id,name,owner_id,display_member_count_override').in('id', ids).order('created_at'),
-      client.from('private_space_channels').select('id,space_id,name,created_at').in('space_id', ids).order('created_at'),
+      client.from('private_spaces').select('id,name,description,owner_id,display_member_count_override').in('id', ids).order('created_at'),
+      client.from('private_space_channels').select('id,space_id,name,description,created_at').in('space_id', ids).order('created_at'),
       client.from('private_space_members').select('space_id,user_id').in('space_id', ids),
     ])
     if (spacesError || channelsError || membersError) throw spacesError || channelsError || membersError
@@ -294,7 +294,7 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
       <button className="space-rail-add" title="Создать пространство" aria-label="Создать пространство" onClick={() => { setError(''); setShowSpaceForm(true) }}><Plus size={20} /></button>
     </aside>
     <aside className="channel-list-panel">
-      <header className="channel-space-heading"><div><span>ВАШИ ПРОСТРАНСТВА</span><strong>{activeSpace?.name ?? 'Каналы'}</strong></div><button className="icon-button" title="Создать пространство" aria-label="Создать пространство" onClick={() => { setError(''); setShowSpaceForm(true) }}><Plus size={18} /></button></header>
+      <header className="channel-space-heading"><div title={activeSpace?.description}><span>ВАШИ ПРОСТРАНСТВА</span><strong>{activeSpace?.name ?? 'Каналы'}</strong></div><button className="icon-button" title="Создать пространство" aria-label="Создать пространство" onClick={() => { setError(''); setShowSpaceForm(true) }}><Plus size={18} /></button></header>
       {loadingSpaces ? <div className="channel-loading"><LoaderCircle className="spin" size={18} /></div> : spaces.length === 0 ? <div className="channel-no-space"><div><Users size={21} /></div><strong>Создайте свой круг</strong><p>Закрытые пространства — место для общения с выбранными друзьями.</p><button className="primary-button" onClick={() => { setError(''); setShowSpaceForm(true) }}><Plus size={16} /> Создать пространство</button></div> : <>
         <div className="channel-list-heading"><span>ТЕКСТОВЫЕ КАНАЛЫ</span>{activeSpace?.role === 'owner' && <button className="icon-button" title="Создать канал" aria-label="Создать канал" onClick={() => { setError(''); setShowChannelForm(true) }}><Plus size={16} /></button>}</div>
         <nav className="space-channel-list" aria-label="Каналы">
@@ -305,7 +305,7 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
     </aside>
     <section className="channel-chat-pane">
       {activeChannel ? <>
-        <header className="channel-chat-header"><div className="channel-title-icon"><Hash size={19} /></div><div><h2>{activeChannel.name}</h2><p>{activeSpace?.name} · закрытый канал</p></div>        <span className="channel-member-pill"><Users size={15} />{activeSpace?.display_member_count_override ?? memberCounts[activeSpaceId] ?? 0}</span></header>
+        <header className="channel-chat-header"><div className="channel-title-icon"><Hash size={19} /></div><div><h2>{activeChannel.name}</h2><p>{activeChannel.description || activeSpace?.description || `${activeSpace?.name} · закрытый канал`}</p></div>        <span className="channel-member-pill"><Users size={15} />{activeSpace?.display_member_count_override ?? memberCounts[activeSpaceId] ?? 0}</span></header>
         <div className="channel-messages-scroll" ref={scrollRef}>
           {loadingMessages && <div className="channel-loading"><LoaderCircle className="spin" size={17} /> Загружаем сообщения</div>}
           {!messages.length && !loadingMessages ? <div className="channel-welcome"><div className="channel-welcome-icon"><Hash size={24} /></div><span>НАЧАЛО КАНАЛА</span><h2>Здесь начинается<br />общая история.</h2><p>Напишите первое сообщение в #{activeChannel.name}.</p></div> : messages.map((message) => {
@@ -318,7 +318,7 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
             }))
             return <article className={`channel-message${message.sender_id === user.id ? ' own-message' : ''}`} key={message.id}>
               <Avatar profile={author} />
-              <div className="channel-message-body"><header><strong>{author?.display_name ?? 'Участник'}</strong><span>@{author?.username ?? 'member'}</span><time>{formatTime(message.created_at)}</time></header><p>{message.body}</p>
+              <div className="channel-message-body"><header><strong>{author?.display_name ?? 'Участник'}{author?.is_verified && <BadgeCheck className="verified-mark" size={14} />}</strong><span>@{author?.username ?? 'member'}</span><time>{formatTime(message.created_at)}</time></header><p>{message.body}</p>
                 <div className="channel-reaction-row">{groupedReactions.map((reaction) => <button key={reaction.emoji} className={`reaction-chip${reaction.active ? ' active' : ''}`} aria-label={`${reaction.emoji} ${reaction.count}`} onClick={() => void toggleReaction(message, reaction.emoji)}>{reaction.emoji}<span>{reaction.count}</span></button>)}<div className="reaction-picker">{reactionChoices.map((emoji) => <button key={emoji} title={`Поставить реакцию ${emoji}`} aria-label={`Поставить реакцию ${emoji}`} onClick={() => void toggleReaction(message, emoji)}>{emoji}</button>)}</div></div>
               </div>
             </article>

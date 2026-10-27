@@ -18,9 +18,18 @@ type AdminProfile = {
 type AdminSpace = {
   id: string
   name: string
+  description: string
   owner_id: string
   actual_member_count: number
   display_member_count_override: number | null
+}
+
+type AdminChannel = {
+  id: string
+  space_id: string
+  space_name: string
+  name: string
+  description: string
 }
 
 type ProfileForm = {
@@ -49,14 +58,18 @@ function formFrom(profile: AdminProfile): ProfileForm {
 }
 
 export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
-  const [section, setSection] = useState<'accounts' | 'channels'>('accounts')
+  const [section, setSection] = useState<'accounts' | 'spaces'>('accounts')
   const [query, setQuery] = useState('')
   const [profiles, setProfiles] = useState<AdminProfile[]>([])
   const [spaces, setSpaces] = useState<AdminSpace[]>([])
+  const [channels, setChannels] = useState<AdminChannel[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [countDrafts, setCountDrafts] = useState<Record<string, string>>({})
+  const [spaceDrafts, setSpaceDrafts] = useState<Record<string, { name: string; description: string }>>({})
+  const [channelDrafts, setChannelDrafts] = useState<Record<string, { name: string; description: string }>>({})
   const [loading, setLoading] = useState(true)
+  const [spacesLoading, setSpacesLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -95,23 +108,84 @@ export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
   useEffect(() => {
     let cancelled = false
     const loadSpaces = async () => {
-      const { data, error: failure } = await client.rpc('admin_list_spaces')
-      if (failure) {
-        if (!cancelled) setError(readableError(failure))
-        return
-      }
-      if (!cancelled) {
-        const rows = (data ?? []) as AdminSpace[]
-        setSpaces(rows)
-        setCountDrafts((current) => Object.fromEntries(rows.map((space) => [
-          space.id,
-          current[space.id] ?? (space.display_member_count_override === null ? '' : String(space.display_member_count_override)),
-        ])))
+      setSpacesLoading(true)
+      try {
+        const [{ data: spaceData, error: spaceError }, { data: channelData, error: channelError }] = await Promise.all([
+          client.rpc('admin_list_spaces'),
+          client.rpc('admin_list_channels'),
+        ])
+        if (spaceError || channelError) throw spaceError || channelError
+        if (!cancelled) {
+          const rows = (spaceData ?? []) as AdminSpace[]
+          const channelRows = (channelData ?? []) as AdminChannel[]
+          setSpaces(rows)
+          setChannels(channelRows)
+          setSpaceDrafts((current) => Object.fromEntries(rows.map((space) => [
+            space.id,
+            current[space.id] ?? { name: space.name, description: space.description },
+          ])))
+          setChannelDrafts((current) => Object.fromEntries(channelRows.map((channel) => [
+            channel.id,
+            current[channel.id] ?? { name: channel.name, description: channel.description },
+          ])))
+          setCountDrafts((current) => Object.fromEntries(rows.map((space) => [
+            space.id,
+            current[space.id] ?? (space.display_member_count_override === null ? '' : String(space.display_member_count_override)),
+          ])))
+        }
+      } catch (caught) {
+        if (!cancelled) setError(readableError(caught))
+      } finally {
+        if (!cancelled) setSpacesLoading(false)
       }
     }
     void loadSpaces()
     return () => { cancelled = true }
   }, [client])
+
+  async function saveSpace(space: AdminSpace) {
+    const draft = spaceDrafts[space.id]
+    if (!draft || saving) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      const { error: failure } = await client.rpc('admin_update_space', {
+        p_space_id: space.id,
+        p_name: draft.name.trim(),
+        p_description: draft.description.trim(),
+      })
+      if (failure) throw failure
+      setSpaces((current) => current.map((row) => row.id === space.id
+        ? { ...row, name: draft.name.trim(), description: draft.description.trim() }
+        : row))
+      setNotice(`Пространство «${draft.name.trim()}» обновлено.`)
+    } catch (caught) {
+      setError(readableError(caught))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveChannel(channel: AdminChannel) {
+    const draft = channelDrafts[channel.id]
+    if (!draft || saving) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      const { error: failure } = await client.rpc('admin_update_channel', {
+        p_channel_id: channel.id,
+        p_name: draft.name.trim(),
+        p_description: draft.description.trim(),
+      })
+      if (failure) throw failure
+      setChannels((current) => current.map((row) => row.id === channel.id
+        ? { ...row, name: draft.name.trim(), description: draft.description.trim() }
+        : row))
+      setNotice(`Канал #${draft.name.trim()} обновлён.`)
+    } catch (caught) {
+      setError(readableError(caught))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function saveProfile(event: FormEvent) {
     event.preventDefault()
@@ -172,7 +246,7 @@ export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
     <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div></header>
     <nav className="admin-tabs" aria-label="Разделы панели администратора">
       <button className={section === 'accounts' ? 'selected' : ''} onClick={() => setSection('accounts')}><Users size={16} /> Аккаунты</button>
-      <button className={section === 'channels' ? 'selected' : ''} onClick={() => setSection('channels')}><BadgeCheck size={16} /> Каналы</button>
+      <button className={section === 'spaces' ? 'selected' : ''} onClick={() => setSection('spaces')}><HashIcon /> Пространства</button>
     </nav>
     {error && section === 'accounts' && !selected && <p className="admin-error" role="alert">{error}</p>}
     {section === 'accounts' ? <div className="admin-account-layout">
@@ -201,8 +275,33 @@ export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
         {error && <p className="admin-error" role="alert">{error}</p>}
         <button className="primary-button admin-save" disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : null} Сохранить изменения</button>
       </form> : <div className="admin-empty">Выберите аккаунт слева, чтобы открыть редактор.</div>}
-    </div> : <section className="admin-channels"><div className="admin-section-intro"><h2>Отображение каналов</h2><p>Здесь можно изменить только цифру в интерфейсе. Фактический список участников останется прежним.</p></div>{spaces.length ? spaces.map((space) => <form key={space.id} className="admin-space-row" onSubmit={(event) => { event.preventDefault(); void saveCount(space) }}><div className="admin-space-icon"><HashIcon /></div><div className="admin-space-copy"><strong>{space.name}</strong><span>Фактических участников: {space.actual_member_count}</span></div><label><span>Показывать</span><input type="number" min={0} step={1} value={countDrafts[space.id] ?? ''} onChange={(event) => setCountDrafts((current) => ({ ...current, [space.id]: event.target.value }))} placeholder={String(space.actual_member_count)} /></label><button className="secondary-button" disabled={saving}>Сохранить</button></form>) : <div className="admin-state">Пространств пока нет.</div>}</section>}
-    {error && section === 'channels' && <p className="admin-error" role="alert">{error}</p>}
+    </div> : <section className="admin-channels">
+      <div className="admin-section-intro"><h2>Пространства и текстовые каналы</h2><p>Названия и описания редактируются в базе. Фактический состав участников не меняется.</p></div>
+      {spacesLoading ? <div className="admin-state"><LoaderCircle className="spin" size={18} /> Загружаем пространства и каналы…</div> : spaces.length ? spaces.map((space) => <article key={space.id} className="admin-space-card">
+        <div className="admin-space-card-heading"><div className="admin-space-icon"><HashIcon /></div><div className="admin-space-copy"><strong>{space.name}</strong><span>Фактических участников: {space.actual_member_count}</span></div></div>
+        <form className="admin-resource-form" onSubmit={(event) => { event.preventDefault(); void saveSpace(space) }}>
+          <label>Название пространства<input value={spaceDrafts[space.id]?.name ?? space.name} onChange={(event) => setSpaceDrafts((current) => ({ ...current, [space.id]: { name: event.target.value, description: current[space.id]?.description ?? space.description } }))} minLength={2} maxLength={48} required /></label>
+          <label>Описание пространства<textarea value={spaceDrafts[space.id]?.description ?? space.description} onChange={(event) => setSpaceDrafts((current) => ({ ...current, [space.id]: { name: current[space.id]?.name ?? space.name, description: event.target.value } }))} maxLength={300} rows={2} placeholder="Описание не задано" /></label>
+          <button className="secondary-button" disabled={saving}>Сохранить пространство</button>
+        </form>
+        <form className="admin-count-form" onSubmit={(event) => { event.preventDefault(); void saveCount(space) }}>
+          <div><strong>Количество участников</strong><small>В базе: {space.actual_member_count}. Override — только отображение.</small></div>
+          <label><span>Показывать</span><input type="number" min={0} step={1} value={countDrafts[space.id] ?? ''} onChange={(event) => setCountDrafts((current) => ({ ...current, [space.id]: event.target.value }))} placeholder={String(space.actual_member_count)} /></label>
+          <button className="secondary-button" disabled={saving}>Сохранить число</button>
+        </form>
+        <div className="admin-channel-list"><h3>Текстовые каналы</h3>
+          {channels.filter((channel) => channel.space_id === space.id).length
+            ? channels.filter((channel) => channel.space_id === space.id).map((channel) => <form key={channel.id} className="admin-channel-form" onSubmit={(event) => { event.preventDefault(); void saveChannel(channel) }}>
+              <span className="admin-channel-hash">#</span>
+              <label>Название<input value={channelDrafts[channel.id]?.name ?? channel.name} onChange={(event) => setChannelDrafts((current) => ({ ...current, [channel.id]: { name: event.target.value, description: current[channel.id]?.description ?? channel.description } }))} minLength={2} maxLength={32} required /></label>
+              <label>Описание<input value={channelDrafts[channel.id]?.description ?? channel.description} onChange={(event) => setChannelDrafts((current) => ({ ...current, [channel.id]: { name: current[channel.id]?.name ?? channel.name, description: event.target.value } }))} maxLength={300} placeholder="Описание не задано" /></label>
+              <button className="secondary-button" disabled={saving}>Сохранить</button>
+            </form>)
+            : <p className="admin-channel-empty">Каналов пока нет.</p>}
+        </div>
+      </article>) : <div className="admin-state">Пространств пока нет.</div>}
+    </section>}
+    {error && section === 'spaces' && <p className="admin-error" role="alert">{error}</p>}
     {notice && <p className="admin-notice" role="status">{notice}</p>}
   </section>
 }
