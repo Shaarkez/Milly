@@ -117,6 +117,7 @@ export default function Messenger() {
   const [ownAvatar, setOwnAvatar] = useState('')
   const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void> } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<Message[]>([])
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
@@ -139,6 +140,7 @@ export default function Messenger() {
   const user = session?.user
   const activeMessageIds = messages.map((message) => message.id)
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
+  messagesRef.current = messages
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -479,9 +481,26 @@ export default function Messenger() {
         scheduleMessageFallback()
       }
     })
+    const imageRefresh = window.setInterval(async () => {
+      const currentImages = messagesRef.current.filter((message) => message.conversation_id === active.id && message.image_path)
+      if (!currentImages.length) return
+      try {
+        const refreshed = await signedImages(currentImages)
+        if (cancelled) return
+        const refreshedById = new Map(refreshed.map((message) => [message.id, message]))
+        setMessages((current) => current.map((message) => refreshedById.get(message.id) ?? message))
+        setConversations((current) => current.map((conversation) => {
+          if (conversation.id !== active.id || !conversation.lastMessage) return conversation
+          return { ...conversation, lastMessage: refreshedById.get(conversation.lastMessage.id) ?? conversation.lastMessage }
+        }))
+      } catch (caught) {
+        if (!cancelled) setError(readableError(caught))
+      }
+    }, 50 * 60 * 1000)
     return () => {
       cancelled = true
       stopMessageFallback()
+      window.clearInterval(imageRefresh)
       void client.removeChannel(channel)
     }
   }, [client, user?.id, active?.id])
