@@ -1,6 +1,8 @@
 export type Profile = {
   id: string
   milly_id: string
+  user_number: number
+  username: string
   display_name: string
   avatar_path: string | null
   avatar_url?: string

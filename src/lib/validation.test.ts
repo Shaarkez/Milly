@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { friendIdSchema, isAllowedImage, registrationSchema } from './validation'
+import { isAllowedImage, registrationSchema, usernameSchema } from './validation'
 
 describe('Milly input validation', () => {
-  it('normalizes and validates exact public IDs', () => {
-    expect(friendIdSchema.parse(' milly-a1b2c3d4 ')).toBe('MILLY-A1B2C3D4')
-    expect(friendIdSchema.safeParse('MILLY-123').success).toBe(false)
-    expect(friendIdSchema.safeParse('me@example.com').success).toBe(false)
+  it('normalizes and validates usernames', () => {
+    expect(usernameSchema.parse(' Shaark_1 ')).toBe('shaark_1')
+    expect(usernameSchema.safeParse('ab').success).toBe(false)
+    expect(usernameSchema.safeParse('me@example.com').success).toBe(false)
   })
 
   it('requires a display name and a sufficiently long password', () => {

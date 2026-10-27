@@ -1,0 +1,146 @@
+.composer {
+  align-items: flex-end;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.composer textarea {
+  align-self: center;
+  height: 38px;
+  min-height: 38px;
+  max-height: 160px;
+  overflow-y: hidden;
+  resize: none;
+}
+
+.composer textarea:not(:placeholder-shown) {
+  overflow-y: auto;
+}
+
+.composer-hint {
+  display: none;
+}
+
+.contact-row,
+.icon-button,
+.section-tabs button,
+.primary-button,
+.send-button,
+.modal,
+.toast {
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.contact-row:hover,
+.primary-button:not(:disabled):hover,
+.send-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.friend-suggestions {
+  display: grid;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.friend-suggestion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px;
+  color: inherit;
+  text-align: left;
+  background: #282926;
+  border: 1px solid #383934;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.friend-suggestion:hover {
+  background: #32312f;
+  border-color: #65566d;
+}
+
+.friend-suggestion:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.friend-suggestion-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 4px;
+}
+
+.friend-suggestion-copy strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.friend-suggestion-copy span,
+.friend-search-empty {
+  color: #96958e;
+  font-size: 10px;
+}
+
+.friend-search-empty {
+  margin: 8px 2px 0;
+}
+
+.profile-identifiers {
+  display: grid;
+  gap: 8px;
+  margin-top: 19px;
+}
+
+.profile-identifiers .my-id {
+  margin-top: 0;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.secondary-button {
+  min-height: 37px;
+  padding: 0 14px;
+  color: #d3d0ca;
+  background: #2b2c29;
+  border: 1px solid #41423d;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.secondary-button:hover {
+  background: #363733;
+}
+
+.danger-button {
+  color: #fff1ef;
+  background: #854e4a;
+}
+
+.danger-button:hover {
+  background: #9a5d58;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer,
+  .contact-row,
+  .icon-button,
+  .section-tabs button,
+  .primary-button,
+  .send-button,
+  .modal,
+  .toast {
+    transition: none;
+  }
+}
