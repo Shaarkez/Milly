@@ -37,30 +37,64 @@ body {
   line-height: 1.45;
 }
 
-.message-row.group-single .message-bubble,
+.message-row.group-single .message-bubble {
+  border-radius: 16px 16px 16px 4px;
+}
+
 .message-row.group-start .message-bubble {
-  border-radius: 17px 6px 11px 12px;
+  border-radius: 16px;
 }
 
 .message-row.group-middle .message-bubble {
-  border-radius: 10px 8px 10px 12px;
+  border-radius: 12px;
 }
 
 .message-row.group-end .message-bubble {
-  border-radius: 6px 8px 1px 12px;
+  border-radius: 3px 12px 12px 10px;
 }
 
-.message-row.mine.group-single .message-bubble,
+.message-row.mine.group-single .message-bubble {
+  border-radius: 16px 16px 2px 16px;
+}
+
 .message-row.mine.group-start .message-bubble {
-  border-radius: 6px 17px 12px 11px;
+  border-radius: 16px;
 }
 
 .message-row.mine.group-middle .message-bubble {
-  border-radius: 8px 10px 12px 10px;
+  border-radius: 12px;
 }
 
 .message-row.mine.group-end .message-bubble {
-  border-radius: 8px 6px 12px 1px;
+  border-radius: 16px 16px 2px 16px;
+}
+
+main .call-overlay:not(.call-overlay-modal) {
+  background: transparent;
+  backdrop-filter: none;
+  pointer-events: none;
+}
+
+main .call-overlay .call-card {
+  pointer-events: auto;
+}
+
+.call-drag-handle {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  display: grid;
+  width: 44px;
+  height: 24px;
+  place-items: center;
+  color: #9296a6;
+  cursor: grab;
+  touch-action: none;
+  transform: translateX(-50%);
+}
+
+.call-drag-handle:active {
+  cursor: grabbing;
 }
 
 .messenger-shell {
