@@ -5,6 +5,7 @@ import { isSupabaseConfigured, pageSize, readableError, supabase } from './lib/s
 import type { CallSignal, Conversation, FriendRequest, Message, Profile } from './lib/types'
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
 import { messagesBelongToSameGroup } from './lib/messageGrouping'
+import { mergeMessages } from './lib/messageOrdering'
 import { shouldPersistToast } from './lib/toastBehavior'
 
 type Dialog = 'friends' | 'profile' | 'peer' | null
@@ -119,6 +120,7 @@ export default function Messenger() {
   const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void> } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<Message[]>([])
+  const activeConversationId = useRef<string | null>(null)
   const signedImageUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const signedAvatarUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -143,6 +145,7 @@ export default function Messenger() {
   const user = session?.user
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
   messagesRef.current = messages
+  activeConversationId.current = active?.id ?? null
 
   useEffect(() => {
     const unlockAudio = () => {
@@ -523,16 +526,16 @@ export default function Messenger() {
       if (cancelled || refreshInProgress) return
       refreshInProgress = true
       try {
-        const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).limit(pageSize)
+        const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
         if (cancelled) return
         if (failure) throw failure
         const rows = ((data ?? []) as Message[]).reverse(); const enriched = await signedImages(rows)
         if (cancelled) return
-        setMessages((current) => {
-          const merged = new Map<string, Message>()
-          for (const message of [...(keepCurrent ? current : []), ...enriched, ...realtimeMessages.values()]) merged.set(message.id, message)
-          return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
-        })
+        setMessages((current) => mergeMessages(
+          keepCurrent ? current : [],
+          enriched,
+          [...realtimeMessages.values()],
+        ))
         const lastMessage = enriched[enriched.length - 1]
         if (lastMessage) {
           setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage, updated_at: lastMessage.created_at } : row)
@@ -567,7 +570,7 @@ export default function Messenger() {
         const [message] = await signedImages([raw as Message])
         if (cancelled) return
         realtimeMessages.set(message.id, message)
-        setMessages((current) => current.some((row) => row.id === message.id) ? current : [...current, message])
+        setMessages((current) => mergeMessages(current, [message]))
         setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
         requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
       } catch (caught) {
@@ -813,11 +816,34 @@ export default function Messenger() {
 
   async function loadOlder() {
     if (!client || !active || !messages.length || !hasOlder) return
-    setLoadingMessages(true); const height = scrollRef.current?.scrollHeight ?? 0
-    const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).lt('created_at', messages[0].created_at).order('created_at', { ascending: false }).limit(pageSize)
-    if (failure) setError(readableError(failure))
-    else { const rows = ((data ?? []) as Message[]).reverse(); const older = await signedImages(rows); setMessages((current) => [...older, ...current]); setHasOlder(rows.length === pageSize); requestAnimationFrame(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight - height }) }
-    setLoadingMessages(false)
+    setLoadingMessages(true)
+    const height = scrollRef.current?.scrollHeight ?? 0
+    const conversationId = active.id
+    const cursor = messages[0]
+    try {
+      const { data, error: failure } = await client.from('messages')
+        .select('id,conversation_id,sender_id,body,image_path,created_at')
+        .eq('conversation_id', conversationId)
+        .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(pageSize)
+      if (failure) throw failure
+      const rows = ((data ?? []) as Message[]).reverse()
+      const older = await signedImages(rows)
+      if (activeConversationId.current !== conversationId) return
+      setMessages((current) => mergeMessages(older, current))
+      setHasOlder(rows.length === pageSize)
+      requestAnimationFrame(() => {
+        if (activeConversationId.current === conversationId && scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight - height
+        }
+      })
+    } catch (caught) {
+      if (activeConversationId.current === conversationId) setError(readableError(caught))
+    } finally {
+      if (activeConversationId.current === conversationId) setLoadingMessages(false)
+    }
   }
 
   async function sendMessage(event?: FormEvent, image?: File) {
@@ -836,7 +862,7 @@ export default function Messenger() {
       const { data, error: failure } = await client.from('messages').insert({ conversation_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,conversation_id,sender_id,body,image_path,created_at').single()
       if (failure) throw failure
       const [message] = await signedImages([data as Message])
-      setMessages((current) => current.some((row) => row.id === message.id) ? current : [...current, message])
+      setMessages((current) => mergeMessages(current, [message]))
       setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
       setText('')
       if (composerRef.current) composerRef.current.style.height = '38px'
