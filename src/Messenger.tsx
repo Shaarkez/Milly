@@ -254,6 +254,7 @@ export default function Messenger() {
     let refreshQueued = false
     let forceAvatarRefreshQueued = false
     let retryDelay = 3000
+    const latestMessages = new Map<string, Message>()
     setOwnAvatar('')
     const loadAccount = async (forceAvatarRefresh = false) => {
       const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: convoRows, error: convoError }] = await Promise.all([
@@ -329,10 +330,14 @@ export default function Messenger() {
       setRequests((requestRows ?? []).map((row: FriendRequest) => ({ ...row, sender: byId.get(row.sender_id) })))
       const chats = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => ({ ...row, peer: byId.get(row.user_low === user.id ? row.user_high : row.user_low)! })).filter((row: Conversation) => row.peer)
       if (chats.length) {
-        const { data: recent } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
-        const latest = new Map<string, Message>()
-        for (const message of (recent ?? []) as Message[]) if (!latest.has(message.conversation_id)) latest.set(message.conversation_id, message)
-        for (const chat of chats) chat.lastMessage = latest.get(chat.id)
+        const { data: recent, error: recentError } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
+        if (cancelled) return
+        if (recentError) throw recentError
+        for (const message of (recent ?? []) as Message[]) {
+          const cached = latestMessages.get(message.conversation_id)
+          if (!cached || cached.created_at < message.created_at) latestMessages.set(message.conversation_id, message)
+        }
+        for (const chat of chats) chat.lastMessage = latestMessages.get(chat.id)
       }
       if (!cancelled) setConversations(chats.sort((a: Conversation, b: Conversation) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
     }
@@ -396,6 +401,25 @@ export default function Messenger() {
     const accountChannel = client.channel(`account:${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, ({ new: raw }) => {
+        const message = raw as Message
+        const cached = latestMessages.get(message.conversation_id)
+        if (cached && cached.created_at >= message.created_at) return
+        latestMessages.set(message.conversation_id, message)
+        if (latestMessages.size > 200) {
+          const oldest = [...latestMessages].reduce((previous, current) =>
+            previous[1].created_at <= current[1].created_at ? previous : current,
+          )
+          latestMessages.delete(oldest[0])
+        }
+        setConversations((current) => {
+          if (!current.some((conversation) => conversation.id === message.conversation_id)) return current
+          return current.map((conversation) => conversation.id === message.conversation_id
+            ? { ...conversation, lastMessage: message, updated_at: message.created_at }
+            : conversation)
+            .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at))
+        })
+      })
       .subscribe((status, failure) => {
         if (status === 'SUBSCRIBED') {
           stopAccountFallback()
