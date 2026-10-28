@@ -23,6 +23,16 @@ export type Message = {
   image_url?: string
 }
 
+export type Group = {
+  id: string
+  name: string
+  avatar_path: string | null
+  avatar_url?: string
+  created_by: string
+  created_at: string
+  updated_at: string
+}
+
 export type Conversation = {
   id: string
   user_low: string
@@ -30,6 +40,8 @@ export type Conversation = {
   updated_at: string
   peer: Profile
   lastMessage?: Message
+  group?: Group
+  groupMembers?: Profile[]
 }
 
 export type FriendRequest = {

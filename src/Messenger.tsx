@@ -1,8 +1,8 @@
-import { Fragment, lazy, Suspense, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { Fragment, lazy, Suspense, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { ArrowLeft, AtSign, CalendarDays, Check, CheckCheck, CircleHelp, Copy, ExternalLink, GripHorizontal, Hash, ImagePlus, LoaderCircle, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MoreHorizontal, Pencil, Phone, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Trash2, Users, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { isSupabaseConfigured, pageSize, readableError, supabase } from './lib/supabase'
-import type { CallSignal, Conversation, FriendRequest, Message, Profile } from './lib/types'
+import type { CallSignal, Conversation, FriendRequest, Group, Message, Profile } from './lib/types'
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
 import { messagesBelongToSameGroup } from './lib/messageGrouping'
 import { mergeMessages } from './lib/messageOrdering'
@@ -11,27 +11,44 @@ type Dialog = 'profile' | null
 type CallPhase = 'idle' | 'calling' | 'incoming' | 'connecting' | 'connected'
 type PendingOffer = { callId: string; from: string; offer: RTCSessionDescriptionInit }
 type MessageReaction = { id: number; user_id: string; message_id: string; emoji: string }
+type StoredReaction = { id: number; user_id: string; emoji: string; message_id?: string; group_message_id?: string }
 const AdminWorkspace = lazy(() => import('./AdminWorkspace'))
 const ADMIN_USER_ID = '6a3ecd6f-7f0a-424a-a02d-ef133f23003a'
 const MESSAGE_REACTIONS = ['❤️', '👍', '🔥'] as const
 const colors = ['#6d8371', '#8b6a5f', '#687c91', '#927b4e', '#806d88']
 const conversationCacheKey = (userId: string) => `milly-conversations:${userId}`
+const activeConversationKey = (userId: string) => `milly-active-conversation:${userId}`
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
 const clock = (value: string) => new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 const displayDate = (value: string) => new Date(value).toDateString() === new Date().toDateString() ? clock(value) : new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short' }).format(new Date(value))
 const profileDate = (value: string) => value && !Number.isNaN(new Date(value).getTime()) ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(value)) : 'Не указана'
+const normalizeReactions = (rows: StoredReaction[]): MessageReaction[] => rows.map((row) => ({
+  id: row.id,
+  user_id: row.user_id,
+  message_id: row.message_id ?? row.group_message_id ?? '',
+  emoji: row.emoji,
+}))
 function isCachedConversation(value: unknown): value is Conversation {
   if (!value || typeof value !== 'object') return false
   const row = value as Record<string, unknown>
   const peer = row.peer
   if (typeof row.id !== 'string' || typeof row.user_low !== 'string' || typeof row.user_high !== 'string' || typeof row.updated_at !== 'string' || !peer || typeof peer !== 'object') return false
   const person = peer as Record<string, unknown>
-  if (typeof person.id !== 'string' || typeof person.username !== 'string' || typeof person.display_name !== 'string' || typeof person.milly_id !== 'string' || typeof person.user_number !== 'number' || (person.avatar_path !== null && typeof person.avatar_path !== 'string')) return false
+  if (typeof person.id !== 'string' || typeof person.username !== 'string' || typeof person.display_name !== 'string' || typeof person.milly_id !== 'string' || typeof person.user_number !== 'number' || (person.avatar_path !== null && typeof person.avatar_path !== 'string') || (person.avatar_url !== undefined && typeof person.avatar_url !== 'string') || (person.avatar_url_expires_at !== undefined && typeof person.avatar_url_expires_at !== 'number')) return false
   const message = row.lastMessage
-  if (message === undefined) return true
-  if (!message || typeof message !== 'object') return false
-  const latest = message as Record<string, unknown>
-  return typeof latest.id === 'string' && typeof latest.conversation_id === 'string' && typeof latest.sender_id === 'string' && typeof latest.created_at === 'string' && (latest.body === null || typeof latest.body === 'string') && (latest.image_path === null || typeof latest.image_path === 'string')
+  if (message !== undefined) {
+    if (!message || typeof message !== 'object') return false
+    const latest = message as Record<string, unknown>
+    if (typeof latest.id !== 'string' || typeof latest.conversation_id !== 'string' || typeof latest.sender_id !== 'string' || typeof latest.created_at !== 'string' || (latest.body !== null && typeof latest.body !== 'string') || (latest.image_path !== null && typeof latest.image_path !== 'string')) return false
+  }
+  const group = row.group
+  if (group !== undefined) {
+    if (!group || typeof group !== 'object') return false
+    const metadata = group as Record<string, unknown>
+    if (typeof metadata.id !== 'string' || typeof metadata.name !== 'string' || typeof metadata.created_by !== 'string' || typeof metadata.created_at !== 'string' || typeof metadata.updated_at !== 'string' || (metadata.avatar_path !== null && typeof metadata.avatar_path !== 'string')) return false
+  }
+  if (row.groupMembers !== undefined && (!Array.isArray(row.groupMembers) || !row.groupMembers.every((person) => person && typeof person === 'object' && typeof (person as Record<string, unknown>).id === 'string'))) return false
+  return true
 }
 const dayLabel = (value: string) => {
   const date = new Date(value)
@@ -113,6 +130,12 @@ export default function Messenger() {
   const [friendMatches, setFriendMatches] = useState<Profile[]>([])
   const [friendSearching, setFriendSearching] = useState(false)
   const [friendToRemove, setFriendToRemove] = useState<Profile | null>(null)
+  const [groupCreateOpen, setGroupCreateOpen] = useState(false)
+  const [groupName, setGroupName] = useState('')
+  const [groupMemberIds, setGroupMemberIds] = useState<Set<string>>(new Set())
+  const [groupAvatarFile, setGroupAvatarFile] = useState<File | null>(null)
+  const [groupAvatarPreview, setGroupAvatarPreview] = useState('')
+  const [groupCreating, setGroupCreating] = useState(false)
   const [messageToDelete, setMessageToDelete] = useState<Message | null>(null)
   const [imageToView, setImageToView] = useState<{ url: string; alt: string } | null>(null)
   const [messageActions, setMessageActions] = useState<Message | null>(null)
@@ -124,6 +147,7 @@ export default function Messenger() {
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileDraft, setProfileDraft] = useState({ username: '' })
   const [notice, setNotice] = useState('')
+  const [topNotice, setTopNotice] = useState('')
   const [copiedUsernameNotice, setCopiedUsernameNotice] = useState(false)
   const [error, setError] = useState('')
   const [online, setOnline] = useState<Set<string>>(new Set())
@@ -148,12 +172,14 @@ export default function Messenger() {
   const messagesRef = useRef<Message[]>([])
   const conversationsRef = useRef<Conversation[]>([])
   const activeConversationId = useRef<string | null>(null)
+  const initialScrollConversation = useRef<string | null>(null)
   const latestMessagesRef = useRef(new Map<string, Message>())
   const signedImageUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const signedAvatarUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
+  const groupAvatarRef = useRef<HTMLInputElement>(null)
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const ringtoneContext = useRef<AudioContext | null>(null)
@@ -173,6 +199,7 @@ export default function Messenger() {
   const client = supabase
   const user = session?.user
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
+  const groupIdsKey = conversations.filter((conversation) => conversation.group).map((conversation) => conversation.id).sort().join(',')
   messagesRef.current = messages
   conversationsRef.current = conversations
   activeConversationId.current = active?.id ?? null
@@ -182,6 +209,11 @@ export default function Messenger() {
     if (activeConversationId.current === conversationId) setMessages(next)
   }
   const activateConversation = (conversation: Conversation) => {
+    initialScrollConversation.current = conversation.id
+    if (user) {
+      try { localStorage.setItem(activeConversationKey(user.id), conversation.id) }
+      catch (caught) { setError(`Не удалось сохранить выбранный чат: ${readableError(caught)}`) }
+    }
     setMessages(messageCache.current.get(conversation.id) ?? [])
     setLoadingMessages(!messageCache.current.has(conversation.id))
     if (editingMessage && editingMessage.conversation_id !== conversation.id) {
@@ -192,6 +224,7 @@ export default function Messenger() {
     setMessageActions(null)
     setActive(conversation)
     setProfileToView(conversation.peer)
+    if (conversation.group) setProfilePanelOpen(false)
   }
 
   function hydrateConversationCache(userId: string) {
@@ -206,11 +239,16 @@ export default function Messenger() {
       }
       const parsed: unknown = JSON.parse(serialized)
       if (!Array.isArray(parsed) || !parsed.every(isCachedConversation)) throw new Error('Сохранённый список чатов повреждён.')
-      const cached = parsed.map((conversation) => ({
-        ...conversation,
-        peer: { ...conversation.peer, avatar_url: undefined },
-        lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
-      }))
+      const cached = parsed.map((conversation) => {
+        const peer = conversation.peer as Profile & { avatar_url_expires_at?: number }
+        const avatarIsFresh = Boolean(peer.avatar_url && peer.avatar_url_expires_at && peer.avatar_url_expires_at > Date.now() + 30_000)
+        if (avatarIsFresh && peer.avatar_path) signedAvatarUrls.current.set(peer.avatar_path, { url: peer.avatar_url!, expiresAt: peer.avatar_url_expires_at! })
+        return {
+          ...conversation,
+          peer: { ...conversation.peer, avatar_url: avatarIsFresh ? peer.avatar_url : undefined },
+          lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
+        }
+      })
       setConversations(cached)
       setAccountLoaded(true)
     } catch (caught) {
@@ -223,14 +261,34 @@ export default function Messenger() {
   useEffect(() => {
     if (!user || !accountLoaded || cachedConversationsUser.current !== user.id) return
     try {
-      const cached = conversations.map((conversation) => ({
-        ...conversation,
-        peer: { ...conversation.peer, avatar_url: undefined },
-        lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
-      }))
+      const cached = conversations.map((conversation) => {
+        const avatar = conversation.peer.avatar_path ? signedAvatarUrls.current.get(conversation.peer.avatar_path) : undefined
+        return {
+          ...conversation,
+          peer: {
+            ...conversation.peer,
+            avatar_url: avatar && avatar.expiresAt > Date.now() + 30_000 ? avatar.url : undefined,
+            avatar_url_expires_at: avatar?.expiresAt,
+          },
+          lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
+        }
+      })
       localStorage.setItem(conversationCacheKey(user.id), JSON.stringify(cached))
     } catch (caught) {
       setError(`Не удалось сохранить список чатов на этом устройстве: ${readableError(caught)}`)
+    }
+  }, [accountLoaded, conversations, user?.id])
+
+  useEffect(() => {
+    if (!user || !accountLoaded || activeConversationId.current) return
+    try {
+      const rememberedId = localStorage.getItem(activeConversationKey(user.id))
+      if (!rememberedId) return
+      const conversation = conversations.find((row) => row.id === rememberedId)
+      if (conversation) activateConversation(conversation)
+      else localStorage.removeItem(activeConversationKey(user.id))
+    } catch (caught) {
+      setError(`Не удалось восстановить выбранный чат: ${readableError(caught)}`)
     }
   }, [accountLoaded, conversations, user?.id])
 
@@ -241,6 +299,14 @@ export default function Messenger() {
     if (active !== latest) setActive(latest)
     if (profilePanelOpen && profileToView?.id === latest.peer.id && profileToView !== latest.peer) setProfileToView(latest.peer)
   }, [active, conversations, profilePanelOpen, profileToView])
+
+  useLayoutEffect(() => {
+    if (!active || loadingMessages || initialScrollConversation.current !== active.id) return
+    const scroll = scrollRef.current
+    if (!scroll) return
+    scroll.scrollTop = scroll.scrollHeight
+    initialScrollConversation.current = null
+  }, [active?.id, loadingMessages, messages])
 
   useEffect(() => () => {
     void ringtoneContext.current?.close()
@@ -284,6 +350,22 @@ export default function Messenger() {
     const timer = window.setTimeout(() => setCopiedUsernameNotice(false), 2500)
     return () => window.clearTimeout(timer)
   }, [copiedUsernameNotice])
+
+  useEffect(() => {
+    if (!topNotice) return
+    const timer = window.setTimeout(() => setTopNotice(''), 3500)
+    return () => window.clearTimeout(timer)
+  }, [topNotice])
+
+  useEffect(() => {
+    if (!groupAvatarFile) {
+      setGroupAvatarPreview('')
+      return
+    }
+    const preview = URL.createObjectURL(groupAvatarFile)
+    setGroupAvatarPreview(preview)
+    return () => URL.revokeObjectURL(preview)
+  }, [groupAvatarFile])
 
   useEffect(() => {
     const context = ringtoneContext.current
@@ -381,18 +463,28 @@ export default function Messenger() {
     latestMessages.clear()
     setOwnAvatar('')
     const loadAccount = async (forceAvatarRefresh = false) => {
-      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: outgoingRows, error: outgoingError }, { data: convoRows, error: convoError }] = await Promise.all([
+      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: outgoingRows, error: outgoingError }, { data: convoRows, error: convoError }, { data: ownGroupRows, error: ownGroupError }] = await Promise.all([
         client.from('profiles').select('id,milly_id,user_number,username,display_name,bio,avatar_path,is_verified,registration_date_override,created_at').eq('id', user.id).single(),
         client.from('friendships').select('user_low,user_high').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
         client.from('friend_requests').select('id,sender_id,receiver_id,created_at').eq('receiver_id', user.id).eq('status', 'pending'),
         client.from('friend_requests').select('receiver_id').eq('sender_id', user.id).eq('status', 'pending'),
         client.from('conversations').select('id,user_low,user_high,updated_at').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
+        client.from('group_members').select('group_id,user_id').eq('user_id', user.id),
       ])
       if (cancelled) return
-      if (ownError || linksError || requestError || outgoingError || convoError) throw ownError || linksError || requestError || outgoingError || convoError
+      if (ownError || linksError || requestError || outgoingError || convoError || ownGroupError) throw ownError || linksError || requestError || outgoingError || convoError || ownGroupError
       const { data: ownAliases, error: ownAliasesError } = await client.from('profile_aliases').select('username').eq('user_id', user.id)
       if (cancelled) return
       if (ownAliasesError) throw ownAliasesError
+      const groupIds = (ownGroupRows ?? []).map((row: { group_id: string }) => row.group_id)
+      const [{ data: groupRows, error: groupsError }, { data: groupMemberRows, error: groupMembersError }] = groupIds.length
+        ? await Promise.all([
+          client.from('groups').select('id,name,avatar_path,created_by,created_at,updated_at').in('id', groupIds),
+          client.from('group_members').select('group_id,user_id').in('group_id', groupIds),
+        ])
+        : [{ data: [], error: null }, { data: [], error: null }]
+      if (cancelled) return
+      if (groupsError || groupMembersError) throw groupsError || groupMembersError
       setProfile({ ...own, aliases: (ownAliases ?? []).map((alias: { username: string }) => alias.username) } as Profile)
       if (own?.avatar_path) {
         const cached = signedAvatarUrls.current.get(own.avatar_path)
@@ -413,7 +505,8 @@ export default function Messenger() {
       const friendIds = (links ?? []).map((row: { user_low: string; user_high: string }) => row.user_low === user.id ? row.user_high : row.user_low)
       const requestIds = (requestRows ?? []).map((row: FriendRequest) => row.sender_id)
       const conversationPeerIds = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => row.user_low === user.id ? row.user_high : row.user_low)
-      const allIds = [...new Set([...friendIds, ...requestIds, ...conversationPeerIds])]
+      const groupMemberIds = (groupMemberRows ?? []).map((row: { user_id: string }) => row.user_id)
+      const allIds = [...new Set([...friendIds, ...requestIds, ...conversationPeerIds, ...groupMemberIds])]
       const [{ data: people, error: peopleError }, { data: aliases, error: aliasesError }] = await Promise.all([
         allIds.length ? client.from('profiles').select('id,milly_id,user_number,username,display_name,bio,avatar_path,is_verified,registration_date_override,created_at').in('id', allIds) : Promise.resolve({ data: [], error: null }),
         allIds.length ? client.from('profile_aliases').select('user_id,username').in('user_id', allIds) : Promise.resolve({ data: [], error: null }),
@@ -422,7 +515,10 @@ export default function Messenger() {
       if (peopleError || aliasesError) throw peopleError || aliasesError
       const aliasesById = new Map<string, string[]>()
       for (const alias of aliases ?? []) aliasesById.set(alias.user_id, [...(aliasesById.get(alias.user_id) ?? []), alias.username])
-      const avatarPaths = [...new Set((people ?? []).map((person: Profile) => person.avatar_path).filter((path): path is string => Boolean(path)))]
+      const avatarPaths = [...new Set([
+        ...(people ?? []).map((person: Profile) => person.avatar_path),
+        ...(groupRows ?? []).map((group: Group) => group.avatar_path),
+      ].filter((path): path is string => Boolean(path)))]
       const now = Date.now()
       const validCachedAvatars = new Map([...signedAvatarUrls.current]
         .filter(([, cached]) => cached.expiresAt > now + 60_000)
@@ -455,18 +551,47 @@ export default function Messenger() {
       setRequests((requestRows ?? []).map((row: FriendRequest) => ({ ...row, sender: byId.get(row.sender_id) })))
       setOutgoingRequestIds(new Set((outgoingRows ?? []).map((row: { receiver_id: string }) => row.receiver_id)))
       const chats = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => ({ ...row, peer: byId.get(row.user_low === user.id ? row.user_high : row.user_low)! })).filter((row: Conversation) => row.peer)
-      if (chats.length) {
-        const { data: recent, error: recentError } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
+      const groupChats: Conversation[] = (groupRows ?? []).map((group: Group) => {
+        const members = (groupMemberRows ?? [])
+          .filter((member: { group_id: string }) => member.group_id === group.id)
+          .map((member: { user_id: string }) => byId.get(member.user_id))
+          .filter(Boolean) as Profile[]
+        const avatar_url = group.avatar_path ? avatarUrls.get(group.avatar_path) : undefined
+        return {
+          id: group.id,
+          user_low: user.id,
+          user_high: user.id,
+          updated_at: group.updated_at,
+          peer: { id: group.id, milly_id: '', user_number: 0, username: '', display_name: group.name, avatar_path: group.avatar_path, avatar_url },
+          group: { ...group, avatar_url },
+          groupMembers: members,
+        } satisfies Conversation
+      })
+      if (chats.length || groupChats.length) {
+        const [recent, groupRecent] = await Promise.all([
+          chats.length
+            ? client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
+            : Promise.resolve({ data: [], error: null }),
+          groupChats.length
+            ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').in('group_id', groupChats.map((row) => row.id)).order('created_at', { ascending: false }).limit(200)
+            : Promise.resolve({ data: [], error: null }),
+        ])
         if (cancelled) return
-        if (recentError) throw recentError
-        for (const message of (recent ?? []) as Message[]) {
+        if (recent.error || groupRecent.error) throw recent.error || groupRecent.error
+        for (const message of (recent.data ?? []) as Message[]) {
+          const cached = latestMessages.get(message.conversation_id)
+          if (!cached || cached.created_at < message.created_at) latestMessages.set(message.conversation_id, message)
+        }
+        for (const raw of groupRecent.data ?? []) {
+          const message = { ...raw, conversation_id: raw.group_id } as Message
           const cached = latestMessages.get(message.conversation_id)
           if (!cached || cached.created_at < message.created_at) latestMessages.set(message.conversation_id, message)
         }
         for (const chat of chats) chat.lastMessage = latestMessages.get(chat.id)
+        for (const groupChat of groupChats) groupChat.lastMessage = latestMessages.get(groupChat.id)
       }
       if (!cancelled) {
-        setConversations(chats.sort((a: Conversation, b: Conversation) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+        setConversations([...chats, ...groupChats].sort((a: Conversation, b: Conversation) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
         setAccountLoaded(true)
       }
     }
@@ -557,6 +682,7 @@ export default function Messenger() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_low=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_high=eq.${user.id}` }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'group_members', filter: `user_id=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
         const deletedId = old.id
         if (typeof deletedId !== 'string') return
@@ -610,6 +736,40 @@ export default function Messenger() {
       void client.removeChannel(accountChannel)
     }
   }, [client, user?.id])
+
+  useEffect(() => {
+    if (!client || !user || !groupIdsKey) return
+    const channels = groupIdsKey.split(',').map((groupId) => client.channel(`group-preview:${groupId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` }, ({ new: raw }) => {
+        const message = { ...raw, conversation_id: groupId } as Message
+        const cached = latestMessagesRef.current.get(groupId)
+        if (cached && cached.created_at >= message.created_at) return
+        latestMessagesRef.current.set(groupId, message)
+        setConversations((current) => current.map((conversation) => conversation.id === groupId
+          ? { ...conversation, lastMessage: message, updated_at: message.created_at }
+          : conversation).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` }, ({ new: raw }) => {
+        const message = { ...raw, conversation_id: groupId } as Message
+        latestMessagesRef.current.set(groupId, message)
+        setConversations((current) => current.map((conversation) => conversation.id === groupId && conversation.lastMessage?.id === message.id
+          ? { ...conversation, lastMessage: message }
+          : conversation))
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` }, () => {
+        void client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', groupId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
+          .then(({ data, error: failure }) => {
+            if (failure) { setError(readableError(failure)); return }
+            const latest = data ? { ...data, conversation_id: groupId } as Message : undefined
+            if (latest) latestMessagesRef.current.set(groupId, latest)
+            else latestMessagesRef.current.delete(groupId)
+            setConversations((current) => current.map((conversation) => conversation.id === groupId
+              ? { ...conversation, lastMessage: latest }
+              : conversation))
+          }, (caught: unknown) => setError(readableError(caught)))
+      }).subscribe())
+    return () => { for (const channel of channels) void client.removeChannel(channel) }
+  }, [client, user?.id, groupIdsKey])
 
   useEffect(() => {
     if (!client || !user) return
@@ -798,10 +958,13 @@ export default function Messenger() {
       if (cancelled || refreshInProgress) return
       refreshInProgress = true
       try {
-        const { data, error: failure } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
+        const { data, error: failure } = active.group
+          ? await client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
+          : await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
         if (cancelled) return
         if (failure) throw failure
-        const rows = ((data ?? []) as Message[]).reverse(); const enriched = await signedImages(rows)
+        const rows = ((data ?? []) as (Message & { group_id?: string })[]).map((message) => active.group ? { ...message, conversation_id: message.group_id! } : message).reverse()
+        const enriched = await signedImages(rows)
         if (cancelled) return
         const nextMessages = mergeMessages(
           keepCurrent || messageCache.current.has(active.id) ? messageCache.current.get(active.id) ?? [] : [],
@@ -810,15 +973,18 @@ export default function Messenger() {
         )
         messageCache.current.set(active.id, nextMessages)
         setMessages(nextMessages)
+        setHasOlder(rows.length === pageSize)
+        setLoadingMessages(false)
         if (nextMessages.length) {
-          const { data: reactionRows, error: reactionError } = await client.from('message_reactions')
-            .select('id,user_id,message_id,emoji')
-            .in('message_id', nextMessages.map((message) => message.id))
+          const { data: reactionRows, error: reactionError } = active.group
+            ? await client.from('group_message_reactions').select('id,user_id,group_message_id,emoji').in('group_message_id', nextMessages.map((message) => message.id))
+            : await client.from('message_reactions').select('id,user_id,message_id,emoji').in('message_id', nextMessages.map((message) => message.id))
           if (cancelled) return
           if (reactionError) setError(readableError(reactionError))
           else {
             const groupedReactions = new Map<string, MessageReaction[]>()
-            for (const reaction of (reactionRows ?? []) as MessageReaction[]) {
+            const normalizedReactions = normalizeReactions((reactionRows ?? []) as StoredReaction[])
+            for (const reaction of normalizedReactions) {
               groupedReactions.set(reaction.message_id, [...(groupedReactions.get(reaction.message_id) ?? []), reaction])
             }
             setMessageReactions((current) => {
@@ -833,8 +999,7 @@ export default function Messenger() {
           setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage, updated_at: lastMessage.created_at } : row)
             .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
         }
-        setHasOlder(rows.length === pageSize); setLoadingMessages(false)
-        if (!keepCurrent) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
+        setHasOlder(rows.length === pageSize)
       } finally {
         refreshInProgress = false
       }
@@ -857,10 +1022,12 @@ export default function Messenger() {
         scheduleMessageFallback()
       }, retryDelay)
     }
+    const messageTable = active.group ? 'group_messages' : 'messages'
+    const messageFilter = active.group ? `group_id=eq.${active.id}` : `conversation_id=eq.${active.id}`
     const channel = client.channel(`messages:${active.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${active.id}` }, async ({ new: raw }) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: messageTable, filter: messageFilter }, async ({ new: raw }) => {
         try {
-          const [message] = await signedImages([raw as Message])
+          const [message] = await signedImages([active.group ? { ...raw, conversation_id: raw.group_id } as Message : raw as Message])
           if (cancelled) return
           realtimeMessages.set(message.id, message)
           updateConversationMessages(active.id, (current) => mergeMessages(current, [message]))
@@ -870,9 +1037,9 @@ export default function Messenger() {
           if (!cancelled) setError(readableError(caught))
         }
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${active.id}` }, async ({ new: raw }) => {
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: messageTable, filter: messageFilter }, async ({ new: raw }) => {
         try {
-          const [message] = await signedImages([raw as Message])
+          const [message] = await signedImages([active.group ? { ...raw, conversation_id: raw.group_id } as Message : raw as Message])
           if (cancelled) return
           realtimeMessages.set(message.id, message)
           updateConversationMessages(active.id, (current) => current.map((row) => row.id === message.id ? message : row))
@@ -882,6 +1049,16 @@ export default function Messenger() {
         } catch (caught) {
           if (!cancelled) setError(readableError(caught))
         }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: messageTable, filter: messageFilter }, ({ old }) => {
+        if (typeof old.id !== 'string') return
+        updateConversationMessages(active.id, (current) => current.filter((message) => message.id !== old.id))
+        setMessageReactions((current) => {
+          const next = { ...current }
+          delete next[old.id as string]
+          return next
+        })
+        void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
         const deletedId = old.id
@@ -1120,6 +1297,88 @@ export default function Messenger() {
     }
   }
 
+  async function createGroup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!client || !user || !profile || groupCreating) return
+    const name = groupName.trim()
+    if (name.length < 1 || name.length > 40) {
+      setError('Название группы должно содержать от 1 до 40 символов.')
+      return
+    }
+    if (groupMemberIds.size === 0) {
+      setError('Выберите хотя бы одного человека из контактов.')
+      return
+    }
+    if (groupAvatarFile && !isAllowedImage(groupAvatarFile.type, groupAvatarFile.size, 5 * 1024 * 1024)) {
+      setError('Выберите JPEG, PNG, WebP или AVIF размером до 5 МБ.')
+      return
+    }
+    setGroupCreating(true)
+    setError('')
+    try {
+      const { data: groupId, error: createError } = await client.rpc('create_group', {
+        p_name: name,
+        p_member_ids: [...groupMemberIds],
+      })
+      if (createError) throw createError
+      if (!groupId) throw new Error('Supabase не вернул идентификатор созданной группы.')
+
+      let avatarPath: string | null = null
+      let avatarUrl: string | undefined
+      let avatarWarning = ''
+      if (groupAvatarFile) {
+        const extension = groupAvatarFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+        const candidatePath = `${user.id}/groups/${groupId}.${extension}`
+        const { error: uploadError } = await client.storage.from('milly-avatars').upload(candidatePath, groupAvatarFile, { contentType: groupAvatarFile.type })
+        if (uploadError) {
+          avatarWarning = readableError(uploadError)
+        } else {
+          const { error: updateError } = await client.from('groups').update({ avatar_path: candidatePath }).eq('id', groupId)
+          if (updateError) {
+            const { error: cleanupError } = await client.storage.from('milly-avatars').remove([candidatePath])
+            avatarWarning = `${readableError(updateError)}${cleanupError ? `; не удалось удалить загруженный файл: ${readableError(cleanupError)}` : ''}`
+          } else {
+            avatarPath = candidatePath
+            const { data: signed, error: signedError } = await client.storage.from('milly-avatars').createSignedUrl(candidatePath, 3600)
+            if (signedError) avatarWarning = readableError(signedError)
+            else if (signed?.signedUrl) {
+              avatarUrl = signed.signedUrl
+              signedAvatarUrls.current.set(candidatePath, { url: signed.signedUrl, expiresAt: Date.now() + 3600_000 })
+            }
+          }
+        }
+      }
+
+      const createdAt = new Date().toISOString()
+      const group: Group = { id: groupId, name, avatar_path: avatarPath, created_by: user.id, created_at: createdAt, updated_at: createdAt }
+      const members = [profile, ...friends.filter((friend) => groupMemberIds.has(friend.id))]
+      const conversation: Conversation = {
+        id: groupId,
+        user_low: user.id,
+        user_high: user.id,
+        updated_at: createdAt,
+        peer: { id: groupId, milly_id: '', user_number: 0, username: '', display_name: name, avatar_path: avatarPath, avatar_url: avatarUrl },
+        group: avatarUrl ? { ...group, avatar_url: avatarUrl } : group,
+        groupMembers: members,
+      }
+      setConversations((current) => [conversation, ...current.filter((item) => item.id !== groupId)])
+      setAccountLoaded(true)
+      activateConversation(conversation)
+      setSection('chats')
+      setProfilePanelOpen(false)
+      setGroupCreateOpen(false)
+      setGroupName('')
+      setGroupMemberIds(new Set())
+      setGroupAvatarFile(null)
+      setNotice('Группа создана.')
+      if (avatarWarning) setError(`Группа создана, но аватар не сохранён: ${avatarWarning}`)
+    } catch (caught) {
+      setError(readableError(caught))
+    } finally {
+      setGroupCreating(false)
+    }
+  }
+
   async function addFriend(target: Profile) {
     if (!client || !user || !profile) return
     setFriendBusy(true); setError(''); setNotice('')
@@ -1185,27 +1444,36 @@ export default function Messenger() {
     const conversationId = active.id
     const cursor = messages[0]
     try {
-      const { data, error: failure } = await client.from('messages')
-        .select('id,conversation_id,sender_id,body,image_path,created_at')
-        .eq('conversation_id', conversationId)
-        .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .limit(pageSize)
+      const { data, error: failure } = active.group
+        ? await client.from('group_messages')
+          .select('id,group_id,sender_id,body,image_path,created_at')
+          .eq('group_id', conversationId)
+          .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(pageSize)
+        : await client.from('messages')
+          .select('id,conversation_id,sender_id,body,image_path,created_at')
+          .eq('conversation_id', conversationId)
+          .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .limit(pageSize)
       if (failure) throw failure
-      const rows = ((data ?? []) as Message[]).reverse()
+      const rows = ((data ?? []) as (Message & { group_id?: string })[]).map((message) => active.group ? { ...message, conversation_id: message.group_id! } : message).reverse()
       const older = await signedImages(rows)
       if (activeConversationId.current !== conversationId) return
       const mergedMessages = mergeMessages(older, messageCache.current.get(conversationId) ?? [])
       updateConversationMessages(conversationId, () => mergedMessages)
       if (older.length) {
-        const { data: reactionRows, error: reactionError } = await client.from('message_reactions')
-          .select('id,user_id,message_id,emoji')
-          .in('message_id', older.map((message) => message.id))
+        const { data: reactionRows, error: reactionError } = active.group
+          ? await client.from('group_message_reactions').select('id,user_id,group_message_id,emoji').in('group_message_id', older.map((message) => message.id))
+          : await client.from('message_reactions').select('id,user_id,message_id,emoji').in('message_id', older.map((message) => message.id))
         if (reactionError) setError(readableError(reactionError))
         else {
           const groupedReactions = new Map<string, MessageReaction[]>()
-          for (const reaction of (reactionRows ?? []) as MessageReaction[]) {
+          const normalizedReactions = normalizeReactions((reactionRows ?? []) as StoredReaction[])
+          for (const reaction of normalizedReactions) {
             groupedReactions.set(reaction.message_id, [...(groupedReactions.get(reaction.message_id) ?? []), reaction])
           }
           setMessageReactions((current) => {
@@ -1233,11 +1501,12 @@ export default function Messenger() {
     event.stopPropagation()
     setMessageActions(message)
     if (!client) return
-    const { data, error: failure } = await client.from('message_reactions')
-      .select('id,user_id,message_id,emoji')
-      .eq('message_id', message.id)
+    const { data, error: failure } = active?.group
+      ? await client.from('group_message_reactions').select('id,user_id,group_message_id,emoji').eq('group_message_id', message.id)
+      : await client.from('message_reactions').select('id,user_id,message_id,emoji').eq('message_id', message.id)
     if (failure) { setError(readableError(failure)); return }
-    setMessageReactions((current) => ({ ...current, [message.id]: data ?? [] }))
+    const normalized = normalizeReactions((data ?? []) as StoredReaction[])
+    setMessageReactions((current) => ({ ...current, [message.id]: normalized }))
   }
 
   async function toggleReactionForMessage(messageId: string, emoji: string) {
@@ -1252,16 +1521,21 @@ export default function Messenger() {
     setReactionBusy((current) => new Set(current).add(operationId))
     let mutationSucceeded = false
     try {
-      const result = existing
-        ? await client.from('message_reactions').delete().eq('id', existing.id)
-        : await client.from('message_reactions').insert({ message_id: messageId, user_id: user.id, emoji })
+      const result = active?.group
+        ? existing
+          ? await client.from('group_message_reactions').delete().eq('id', existing.id)
+          : await client.from('group_message_reactions').insert({ group_message_id: messageId, user_id: user.id, emoji })
+        : existing
+          ? await client.from('message_reactions').delete().eq('id', existing.id)
+          : await client.from('message_reactions').insert({ message_id: messageId, user_id: user.id, emoji })
       if (result.error) throw result.error
       mutationSucceeded = true
-      const { data, error: failure } = await client.from('message_reactions')
-        .select('id,user_id,message_id,emoji')
-        .eq('message_id', messageId)
+      const { data, error: failure } = active?.group
+        ? await client.from('group_message_reactions').select('id,user_id,group_message_id,emoji').eq('group_message_id', messageId)
+        : await client.from('message_reactions').select('id,user_id,message_id,emoji').eq('message_id', messageId)
       if (failure) throw failure
-      setMessageReactions((current) => ({ ...current, [messageId]: data ?? [] }))
+      const normalized = normalizeReactions((data ?? []) as StoredReaction[])
+      setMessageReactions((current) => ({ ...current, [messageId]: normalized }))
     } catch (caught) {
       if (!mutationSucceeded) setMessageReactions((current) => ({ ...current, [messageId]: currentReactions }))
       setError(readableError(caught))
@@ -1303,16 +1577,13 @@ export default function Messenger() {
   async function deleteMessage(message: Message) {
     if (!client || !user || deletingMessage || message.sender_id !== user.id) return
     const conversationId = message.conversation_id
+    const isGroup = Boolean(conversationsRef.current.find((conversation) => conversation.id === conversationId)?.group)
     setDeletingMessage(true)
     setError('')
     try {
-      const { data: deleted, error: deleteError } = await client.from('messages')
-        .delete()
-        .eq('id', message.id)
-        .eq('conversation_id', conversationId)
-        .eq('sender_id', user.id)
-        .select('id')
-        .maybeSingle()
+      const { data: deleted, error: deleteError } = isGroup
+        ? await client.from('group_messages').delete().eq('id', message.id).eq('group_id', conversationId).eq('sender_id', user.id).select('id').maybeSingle()
+        : await client.from('messages').delete().eq('id', message.id).eq('conversation_id', conversationId).eq('sender_id', user.id).select('id').maybeSingle()
       if (deleteError) throw deleteError
       if (!deleted) throw new Error('Сообщение уже удалено или недоступно.')
 
@@ -1331,22 +1602,19 @@ export default function Messenger() {
       setMessageToDelete(null)
 
       const [latestResult, storageResult] = await Promise.all([
-        client.from('messages')
-          .select('id,conversation_id,sender_id,body,image_path,created_at')
-          .eq('conversation_id', conversationId)
-          .order('created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .limit(1)
-          .maybeSingle(),
+        isGroup
+          ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
+          : client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle(),
         message.image_path
           ? client.storage.from('milly-media').remove([message.image_path])
           : Promise.resolve({ error: null }),
       ])
       if (latestResult.error) throw new Error(`Сообщение удалено, но превью чата не удалось обновить: ${readableError(latestResult.error)}`)
-      const latest = latestResult.data
-      if (latest) latestMessagesRef.current.set(conversationId, latest as Message)
+      const rawLatest = latestResult.data as (Message & { group_id?: string }) | null
+      const latest = rawLatest ? { ...rawLatest, conversation_id: isGroup ? rawLatest.group_id! : rawLatest.conversation_id } : null
+      if (latest) latestMessagesRef.current.set(conversationId, latest)
       setConversations((current) => current.map((conversation) => conversation.id === conversationId
-        ? { ...conversation, lastMessage: (latest as Message | null) ?? undefined }
+        ? { ...conversation, lastMessage: latest ?? undefined }
         : conversation).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
       if (storageResult.error) throw new Error(`Сообщение удалено, но файл не удалось удалить из хранилища: ${readableError(storageResult.error)}`)
       setNotice('Сообщение удалено.')
@@ -1363,14 +1631,12 @@ export default function Messenger() {
     setSending(true); setError('')
     try {
       if (editingMessage) {
-        const { data, error: failure } = await client.from('messages')
-          .update({ body: text.trim() })
-          .eq('id', editingMessage.id)
-          .eq('sender_id', user.id)
-          .select('id,conversation_id,sender_id,body,image_path,created_at')
-          .single()
+        const { data, error: failure } = active.group
+          ? await client.from('group_messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,group_id,sender_id,body,image_path,created_at').single()
+          : await client.from('messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,conversation_id,sender_id,body,image_path,created_at').single()
         if (failure) throw failure
-        const updated = { ...editingMessage, ...(data as Message) }
+        const rawUpdated = data as Message & { group_id?: string }
+        const updated = { ...editingMessage, ...rawUpdated, conversation_id: active.group ? rawUpdated.group_id! : rawUpdated.conversation_id }
         updateConversationMessages(active.id, (current) => current.map((message) => message.id === updated.id ? updated : message))
         setConversations((current) => current.map((row) => row.lastMessage?.id === updated.id ? { ...row, lastMessage: updated } : row))
         setEditingMessage(null)
@@ -1388,9 +1654,12 @@ export default function Messenger() {
         const { error: uploadError } = await client.storage.from('milly-media').upload(imagePath, image, { contentType: image.type })
         if (uploadError) throw uploadError
       }
-      const { data, error: failure } = await client.from('messages').insert({ conversation_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,conversation_id,sender_id,body,image_path,created_at').single()
+      const { data, error: failure } = active.group
+        ? await client.from('group_messages').insert({ group_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,group_id,sender_id,body,image_path,created_at').single()
+        : await client.from('messages').insert({ conversation_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,conversation_id,sender_id,body,image_path,created_at').single()
       if (failure) throw failure
-      const [message] = await signedImages([data as Message])
+      const rawMessage = data as Message & { group_id?: string }
+      const [message] = await signedImages([active.group ? { ...rawMessage, conversation_id: rawMessage.group_id! } : rawMessage])
       updateConversationMessages(active.id, (current) => mergeMessages(current, [message]))
       setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
       setText('')
@@ -1667,7 +1936,7 @@ export default function Messenger() {
       setConversations((current) => current.map((conversation) => conversation.peer.id === user.id ? { ...conversation, peer: updatedProfile } : conversation))
       setActive((current) => current?.peer.id === user.id ? { ...current, peer: updatedProfile } : current)
       setProfileToView((current) => current?.id === user.id ? updatedProfile : current)
-      setNotice('Юзернейм сохранён.')
+      setTopNotice('Юзернейм обновлён')
     } catch (caught) { setError(readableError(caught)) }
     finally { setProfileSaving(false) }
   }
@@ -1681,6 +1950,9 @@ export default function Messenger() {
     } catch (caught) {
       setError(readableError(caught))
     }
+  }
+  async function copyAlias(username: string) {
+    await copyPeerUsername(username)
   }
   function composerKey(event: KeyboardEvent<HTMLTextAreaElement>) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage() } }
 
@@ -1713,27 +1985,29 @@ export default function Messenger() {
       {!search.trim() && !visibleChats.length && !requests.length && !accountLoaded && <div className="account-list-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговоры…</div>}
       {!search.trim() && !visibleChats.length && !requests.length && accountLoaded && <EmptyList icon={<MessageCircle size={17} />} title="Разговоров пока нет" action="Найти человека" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()} />}
     </div> : null}
-    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ username: profile.username }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
+    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ username: profile.username }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setGroupName(''); setGroupMemberIds(new Set()); setGroupAvatarFile(null); setGroupCreateOpen(true) }}><Users size={16} /> Создать группу</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
   </aside>
 
   <section className="chat-pane">{section === 'admin' && client ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем панель…</div>}><AdminWorkspace client={client} onExit={() => setSection('chats')} /> </Suspense> : active && peer ? <>
-    <header className="chat-header"><button className="icon-button mobile-back" aria-label="Назад" onClick={() => setActive(null)}><ArrowLeft size={18} /></button><button className="chat-avatar-button" aria-label="Открыть профиль" onClick={() => { setProfileToView(peer); setProfilePanelOpen(true) }}><Avatar name={peer.display_name} online={online.has(peer.id)} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /></button><button className="chat-person chat-person-button" onClick={() => { setProfileToView(peer); setProfilePanelOpen((open) => !open) }}><strong>{peer.display_name}{peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>{presenceLabel(peer.id)}</span></button><div className="header-actions"><button className="icon-button call-button" title="Голосовой звонок" aria-label="Голосовой звонок" onClick={() => void startCall(peer)}><Phone size={18} /></button></div></header>
-    <div className="messages-scroll" ref={scrollRef}><div className="chat-info-banner"><div className="chat-info-banner-identity"><Avatar name={peer.display_name} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /><strong>{peer.display_name}{peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong></div><div className="chat-info-banner-details"><div><span>Дата регистрации</span><strong>{profileDate(peer.registration_date_override ?? peer.created_at ?? '')}</strong></div><div><span>Верификация</span><strong className={peer.is_verified ? 'chat-info-positive' : ''}>{peer.is_verified ? 'Есть' : 'Нет'}</strong></div><div><span>В контактах</span><strong className={friends.some((friend) => friend.id === peer.id) ? 'chat-info-positive' : ''}>{friends.some((friend) => friend.id === peer.id) ? 'Да' : 'Нет'}</strong></div></div></div>{loadingMessages && <div className="history-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговор</div>}{hasOlder && !loadingMessages && <button className="older-button" onClick={() => void loadOlder()}>Показать предыдущие сообщения</button>}{messages.length === 0 && !loadingMessages ? <div className="chat-begin"><div className="begin-icon"><MessageCircle size={24} /></div><span>СЕЙЧАС ВЫ ЗДЕСЬ</span><h2>Начало хорошего<br />разговора.</h2><p>Напишите {peer.display_name}, и это место станет вашим.</p></div> : <div className="message-list">{messages.map((message, index) => {
+    <header className="chat-header"><button className="icon-button mobile-back" aria-label="Назад" onClick={() => setActive(null)}><ArrowLeft size={18} /></button><button className="chat-avatar-button" aria-label={active.group ? 'Аватар группы' : 'Открыть профиль'} onClick={() => { if (!active.group) { setProfileToView(peer); setProfilePanelOpen(true) } }}><Avatar name={peer.display_name} online={!active.group && online.has(peer.id)} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /></button><button className="chat-person chat-person-button" onClick={() => { if (!active.group) { setProfileToView(peer); setProfilePanelOpen((open) => !open) } }}><strong>{peer.display_name}{!active.group && peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>{active.group ? `${active.groupMembers?.length ?? 0} участников` : presenceLabel(peer.id)}</span></button><div className="header-actions">{!active.group && <button className="icon-button call-button" title="Голосовой звонок" aria-label="Голосовой звонок" onClick={() => void startCall(peer)}><Phone size={18} /></button>}</div></header>
+    <div className="messages-scroll" ref={scrollRef}><div className="chat-info-banner"><div className="chat-info-banner-identity"><Avatar name={peer.display_name} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /><strong>{peer.display_name}{!active.group && peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong></div><div className="chat-info-banner-details">{active.group ? <><div><span>Участники</span><strong>{active.groupMembers?.length ?? 0}</strong></div><div><span>Создатель</span><strong>{active.groupMembers?.find((member) => member.id === active.group?.created_by)?.display_name ?? 'Участник'}</strong></div></> : <><div><span>Дата регистрации</span><strong>{profileDate(peer.registration_date_override ?? peer.created_at ?? '')}</strong></div><div><span>Верификация</span><strong className={peer.is_verified ? 'chat-info-positive' : ''}>{peer.is_verified ? 'Есть' : 'Нет'}</strong></div><div><span>В контактах</span><strong className={friends.some((friend) => friend.id === peer.id) ? 'chat-info-positive' : ''}>{friends.some((friend) => friend.id === peer.id) ? 'Да' : 'Нет'}</strong></div></>}</div></div>{loadingMessages && <div className="history-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговор</div>}{hasOlder && !loadingMessages && <button className="older-button" onClick={() => void loadOlder()}>Показать предыдущие сообщения</button>}{messages.length === 0 && !loadingMessages ? <div className="chat-begin"><div className="begin-icon"><MessageCircle size={24} /></div><span>{active.group ? 'ВАШ ГРУППОВОЙ ЧАТ' : 'СЕЙЧАС ВЫ ЗДЕСЬ'}</span><h2>{active.group ? 'Начните разговор.' : <>Начало хорошего<br />разговора.</>}</h2><p>{active.group ? `Напишите участникам группы «${peer.display_name}».` : `Напишите ${peer.display_name}, и это место станет вашим.`}</p></div> : <div className="message-list">{messages.map((message, index) => {
       const mine = message.sender_id === user?.id; const previous = messages[index - 1]
       const groupStart = !previous || !messagesBelongToSameGroup(previous, message)
       const next = messages[index + 1]
       const groupEnd = !next || !messagesBelongToSameGroup(message, next)
       const groupPosition = groupStart ? groupEnd ? 'group-single' : 'group-start' : groupEnd ? 'group-end' : 'group-middle'
       const newDay = !previous || new Date(message.created_at).toDateString() !== new Date(previous.created_at).toDateString()
+      const author = active.group ? active.groupMembers?.find((member) => member.id === message.sender_id) : peer
       const reactions = messageReactions[message.id] ?? []
       const reactionCounts = [...new Set(reactions.map((reaction) => reaction.emoji))]
       return <Fragment key={message.id}>
         {newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}
         <div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>
-          {!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} />}
+          {!mine && groupStart && <Avatar name={author?.display_name ?? peer.display_name} image={author?.avatar_url} onImageError={author?.avatar_path ? () => void refreshAvatar(author.avatar_path!) : undefined} />}
           {!mine && !groupStart && <span className="avatar-spacer" />}
           <div className="message-content">
-            {message.image_url && <button className="message-image" title="Открыть фотографию" onMouseDown={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}
+            {active.group && groupStart && <span className="message-author">{mine ? 'Вы' : author?.display_name ?? 'Участник'}</span>}
+            {message.image_url && <button className="message-image" title="Открыть фотографию" onMouseDown={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" onLoad={() => { const scroll = scrollRef.current; if (scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120) scroll.scrollTop = scroll.scrollHeight }} /></button>}
             {message.body && <div className="message-bubble" onMouseDown={(event) => void openMessageActions(message, event)}>{message.body}</div>}
             {reactionCounts.length > 0 && <div className="message-reactions">{reactionCounts.map((emoji) => {
               const reactionsForEmoji = reactions.filter((reaction) => reaction.emoji === emoji)
@@ -1755,7 +2029,7 @@ export default function Messenger() {
     {editingMessage && <div className="editing-message-bar"><span>Изменение сообщения</span><button type="button" onClick={() => { setEditingMessage(null); setText('') }} aria-label="Отменить редактирование"><X size={15} /></button></div>}<form className="composer" onSubmit={(event) => void sendMessage(event)}><input ref={fileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendMessage(undefined, file); event.target.value = '' }} /><button type="button" className="icon-button attach-button" title="Прикрепить фотографию" aria-label="Прикрепить фотографию" onClick={() => fileRef.current?.click()}><ImagePlus size={19} /></button><textarea ref={composerRef} value={text} onChange={(event) => { const textarea = event.currentTarget; setText(textarea.value); textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px` }} onKeyDown={composerKey} placeholder={editingMessage ? 'Изменить сообщение…' : 'Напишите сообщение…'} rows={1} maxLength={4000} aria-label="Текст сообщения" /><button type="submit" className="send-button" disabled={sending || !text.trim()} aria-label={editingMessage ? 'Сохранить сообщение' : 'Отправить сообщение'}>{sending ? <LoaderCircle className="spin" size={17} /> : editingMessage ? <Check size={17} /> : <Send size={17} />}</button></form>
   </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={16} /> Найти человека</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>
 
-  {profilePanelOpen && profileToView && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя">
+  {profilePanelOpen && profileToView && !active?.group && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя">
     <header className="profile-sidebar-header"><button className="icon-button profile-sidebar-back" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><ArrowLeft size={17} /></button><strong>Профиль</strong><button className="icon-button" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><X size={17} /></button></header>
     <div className="profile-sidebar-content">
       <div className="profile-sidebar-hero">
@@ -1770,7 +2044,7 @@ export default function Messenger() {
         <div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div>
         <div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div>
         <div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>
-        {Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><strong>{profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</strong></span></div>}
+        {Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><span className="profile-alias-list">{profileToView.aliases?.map((alias) => <button key={alias} type="button" className="profile-alias-copy" onClick={() => void copyAlias(alias)}>@{alias}</button>)}</span></span></div>}
       </div>
       <div className="profile-sidebar-actions">
         <button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button>
@@ -1784,6 +2058,7 @@ export default function Messenger() {
       </div>
     </div>
   </aside>}
+  {topNotice && <div className="clipboard-toast" role="status"><Check size={17} /> {topNotice}</div>}
   {copiedUsernameNotice && <div className="clipboard-toast" role="status"><Check size={17} /> Юзернейм скопирован</div>}
   {imageToView && <div className="image-viewer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setImageToView(null) }}>
     <section className="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фотографии">
@@ -1792,7 +2067,8 @@ export default function Messenger() {
     </section>
   </div>}
   {(error || notice) && user?.id === ADMIN_USER_ID && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
-  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>@{profile.username}</span>{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><form className="profile-edit" onSubmit={(event) => void saveUsername(event)}><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button type="button" className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><label className="my-id username-edit-row"><span>ЮЗЕРНЕЙМ</span><span className="username-edit-field"><span>@</span><input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft({ username: event.target.value })} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></span><button type="button" className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></label></div><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ username: profile.username }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
+  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>@{profile.username}</span>{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias, index) => <Fragment key={alias}>{index > 0 ? ', ' : ''}<button type="button" className="profile-alias-copy" onClick={() => void copyAlias(alias)}>@{alias}</button></Fragment>)}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><form className="profile-edit" onSubmit={(event) => void saveUsername(event)}><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button type="button" className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><label className="my-id username-edit-row"><span>ЮЗЕРНЕЙМ</span><span className="username-edit-field"><span>@</span><input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft({ username: event.target.value })} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></span><button type="button" className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></label></div><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ username: profile.username }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
+  {groupCreateOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !groupCreating) setGroupCreateOpen(false) }}><form className="modal group-create-modal" role="dialog" aria-modal="true" aria-labelledby="group-create-title" onSubmit={(event) => void createGroup(event)}><div className="modal-heading"><div><span className="form-kicker">НОВАЯ ГРУППА</span><h2 id="group-create-title">Создать группу</h2></div><button type="button" className="icon-button" aria-label="Закрыть" disabled={groupCreating} onClick={() => setGroupCreateOpen(false)}><X size={18} /></button></div><div className="group-create-identity"><button type="button" className="group-avatar-picker" onClick={() => groupAvatarRef.current?.click()} aria-label="Выбрать аватар группы"><Avatar name={groupName || 'Группа'} large image={groupAvatarPreview} /><span><ImagePlus size={15} /></span></button><input ref={groupAvatarRef} type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden onChange={(event) => { setGroupAvatarFile(event.target.files?.[0] ?? null); event.target.value = '' }} /><label className="group-name-field">Название группы<input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Например, Свои" maxLength={40} autoFocus required /></label></div><div className="group-member-heading"><strong>Участники</strong><span>Выбрано: {groupMemberIds.size}</span></div><div className="group-member-picker">{friends.map((friend) => <button key={friend.id} type="button" className={`group-member-option${groupMemberIds.has(friend.id) ? ' selected' : ''}`} aria-pressed={groupMemberIds.has(friend.id)} onClick={() => setGroupMemberIds((current) => { const next = new Set(current); if (next.has(friend.id)) next.delete(friend.id); else next.add(friend.id); return next })}><Avatar name={friend.display_name} image={friend.avatar_url} onImageError={friend.avatar_path ? () => void refreshAvatar(friend.avatar_path!) : undefined} /><span><strong>{friend.display_name}</strong><small>@{friend.username}</small></span><i>{groupMemberIds.has(friend.id) ? <Check size={14} /> : null}</i></button>)}{friends.length === 0 && <p className="group-no-members">Сначала добавьте людей в контакты — их можно будет пригласить в группу.</p>}</div><div className="confirm-actions"><button type="button" className="secondary-button" disabled={groupCreating} onClick={() => setGroupCreateOpen(false)}>Отмена</button><button type="submit" className="primary-button" disabled={groupCreating || friends.length === 0}>{groupCreating ? <LoaderCircle className="spin" size={16} /> : <Users size={16} />}Создать группу</button></div></form></div>}
   {friendToRemove && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !friendBusy) setFriendToRemove(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="remove-friend-title">Удалить из друзей?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={friendBusy} onClick={() => setFriendToRemove(null)}><X size={18} /></button></div><p>{friendToRemove.display_name} исчезнет из списка друзей. История переписки останется.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={friendBusy} onClick={() => setFriendToRemove(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={friendBusy} onClick={() => void removeFriend(friendToRemove)}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : null}Удалить из друзей</button></div></section></div>}
   {messageToDelete && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingMessage) setMessageToDelete(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-message-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="delete-message-title">Удалить сообщение?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}><X size={18} /></button></div><p>Сообщение будет удалено у вас и у собеседника. Это действие нельзя отменить.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={deletingMessage} onClick={() => void deleteMessage(messageToDelete)}>{deletingMessage && <LoaderCircle className="spin" size={16} />}Удалить сообщение</button></div></section></div>}
   {appearanceOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAppearanceOpen(false) }}><section className="modal appearance-modal" role="dialog" aria-modal="true" aria-labelledby="appearance-title"><div className="modal-heading"><div><span className="form-kicker">НАСТРОЙКИ</span><h2 id="appearance-title">Оформление</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setAppearanceOpen(false)}><X size={18} /></button></div><p>Выберите тему для Milly. Настройка сохраняется на этом устройстве.</p><button className={`theme-option${lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(true)}><span className="theme-preview theme-preview-light" /><span><strong>Светло-голубая</strong><small>Светлый фон и голубые акценты</small></span><span className="theme-radio" /></button><button className={`theme-option${!lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(false)}><span className="theme-preview theme-preview-dark" /><span><strong>Тёмная</strong><small>Спокойные тёмные поверхности</small></span><span className="theme-radio" /></button></section></div>}
