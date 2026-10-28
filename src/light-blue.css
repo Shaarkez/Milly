@@ -73,8 +73,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .begin-icon { color: #4293d3; background: #e9f5ff; border-color: #cfe7fb; }
 .chat-begin h2 { color: #29415d; }
 .chat-begin p { color: #7e8da1; }
+.welcome-pane { background: radial-gradient(ellipse at 50% 42%, #e1f1ff 0, #f7faff 48%, transparent 76%); }
+.welcome-overline { color: #5385b2; letter-spacing: 1.8px; }
+.welcome-orbit { border-color: #cfe2f3; }
+.welcome-orbit::before { border-color: #dceaf6; }
+.welcome-mark { color: #fff; background: linear-gradient(145deg, #70bcf8, #438fd0); border: 0; border-radius: 18px; box-shadow: 0 10px 24px #4e9cda30; transform: none; }
+.orbit-one { background: #64ade8; }
+.welcome-pane h1 { color: #29415d; font-weight: 700; letter-spacing: -.5px; }
+.welcome-pane h1 em { color: #4a9bd9; }
+.welcome-pane>p { color: #74869a; }
+.welcome-foot { color: #8192a5; }
+.welcome-foot>span { background: #cbd9e6; }
 .composer { background: #fff; border-color: #dde8f2; border-radius: 13px; box-shadow: 0 8px 25px #31527012; }
-.composer:focus-within { border-color: #dde8f2; box-shadow: 0 8px 25px #31527012; }
+.composer:focus-within { border-color: #dde8f2; box-shadow: 0 8px 25px #31527012; outline: none; }
 .composer { align-items: center; }
 .composer textarea { color: #273d56; font-size: 15px; outline: none; }
 .composer textarea::placeholder { color: #9ba9b9; }
@@ -110,6 +121,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-identifiers .my-id>span:first-child { color: #8293a6; }
 .profile-identifiers .my-id strong { color: #314b67; }
 .profile-cover { background: linear-gradient(135deg, #dcefff, #edf5fd 55%, #cde7fb); }
+.profile-cover { min-height: 220px; }
 .profile-cover-orbit { border-color: #92c9f14a; }
 .profile-identity strong { color: #2e435b; }
 .profile-identity>span { color: #74869b; }
@@ -229,6 +241,34 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-editor-actions { display: flex; gap: 8px; }
 .profile-editor-actions button { flex: 1; min-height: 38px; margin-top: 11px; }
 
+.search-box input:focus, .search-box input:focus-visible { outline: none !important; box-shadow: none !important; }
+.search-box:focus-within { border-color: #d3deea !important; box-shadow: none !important; outline: none !important; }
+.composer textarea:focus, .composer textarea:focus-visible { outline: none !important; box-shadow: none !important; }
+.account-list-loading { display: flex; align-items: center; justify-content: center; gap: 9px; padding: 22px 10px; color: #7d8fa3; font-size: 12px; }
+.message-row { width: 100%; min-width: 0; flex: 0 0 auto; }
+.message-row>.avatar, .message-row>.avatar-spacer { box-sizing: border-box; flex: 0 0 38px; width: 38px; min-width: 38px; height: 38px; aspect-ratio: 1; }
+.message-row>.avatar { flex-shrink: 0; border-radius: 50%; }
+.message-content { min-width: 0; }
+.message-actions-menu { position: absolute; z-index: 6; bottom: calc(100% + 8px); left: 0; display: flex; width: 214px; flex-direction: column; padding: 6px; color: #31465b; background: #fff; border: 1px solid #e1e9f1; border-radius: 12px; box-shadow: 0 12px 32px #223a5226; }
+.mine .message-actions-menu { right: 0; left: auto; }
+.message-actions-menu>button { display: flex; align-items: center; min-height: 38px; gap: 10px; padding: 0 9px; color: inherit; text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; font-size: 12px; }
+.message-actions-menu>button:hover { background: #f0f6fb; }
+.message-actions-menu>button.message-action-delete { color: #c25f69; }
+.message-action-reactions { display: flex; justify-content: space-around; padding: 4px 2px 8px; border-bottom: 1px solid #edf1f6; }
+.message-action-reactions button { width: 42px; height: 36px; background: transparent; border: 0; border-radius: 8px; cursor: pointer; font-size: 20px; }
+.message-action-reactions button:hover { background: #eef6fd; }
+.message-reactions { display: flex; flex-wrap: wrap; gap: 4px; }
+.message-reactions>span { padding: 2px 7px; color: #476783; background: #fff; border: 1px solid #dfeaf4; border-radius: 999px; font-size: 11px; }
+.editing-message-bar { display: flex; align-items: center; justify-content: space-between; width: min(calc(100% - 48px), 720px); margin: 0 auto 6px; padding: 7px 12px; color: #4387bc; background: #edf7ff; border-radius: 8px; font-size: 11px; }
+.editing-message-bar button { display: grid; width: 24px; height: 24px; place-items: center; color: inherit; background: transparent; border: 0; cursor: pointer; }
+.message-actions-menu~.message-meta { margin-top: 5px; }
+body.milly-dark .account-list-loading { color: #9eacba; }
+body.milly-dark .message-actions-menu { color: #dce4ec; background: #222930; border-color: #36414c; box-shadow: 0 12px 32px #00000050; }
+body.milly-dark .message-actions-menu>button:hover, body.milly-dark .message-action-reactions button:hover { background: #303943; }
+body.milly-dark .message-action-reactions { border-color: #36414c; }
+body.milly-dark .message-reactions>span { color: #c5d5e3; background: #26323d; border-color: #3a4855; }
+body.milly-dark .editing-message-bar { color: #9cccf0; background: #263746; }
+
 @keyframes profile-enter { from { opacity: 0; transform: translateX(7px); } to { opacity: 1; transform: translateX(0); } }
 @media (max-width: 1050px) {
   .sidebar { flex-basis: 300px; min-width: 280px; }
@@ -271,6 +311,7 @@ body.milly-dark .message-day-divider { color: #a0adbb; }
 body.milly-dark .message-day-divider>span { color: #dce4ec; background: #222930; border-color: #36414c; box-shadow: none; }
 body.milly-dark .message-day-divider::before, body.milly-dark .message-day-divider::after { background: #35404b; }
 body.milly-dark .composer textarea { color: #dce5ed; }
+body.milly-dark .composer:focus-within { border-color: #36414c; box-shadow: 0 8px 25px #00000020; }
 body.milly-dark .my-id, body.milly-dark .request-row, body.milly-dark .profile-info-icon { color: #c4d2e0; background: #2a333c; border-color: #39434d; }
 body.milly-dark .profile-identifiers .my-id { background: #2a333c; border-color: #39434d; }
 body.milly-dark .profile-identifiers .my-id>span:first-child { color: #9eafbf; }
@@ -287,6 +328,13 @@ body.milly-dark .chat-info-banner-details>div { border-color: #343e48; }
 body.milly-dark .chat-info-banner-details>div>span, body.milly-dark .chat-info-banner-bio, body.milly-dark .profile-bio { color: #a0adbb; }
 body.milly-dark .chat-info-banner-details .chat-info-positive { color: #76b8ec; }
 body.milly-dark .chat-info-banner-details>div:last-child strong.chat-info-positive { color: #62c88e; }
+body.milly-dark .welcome-pane { background: radial-gradient(ellipse at 50% 42%, #263746 0, #171b20 52%, transparent 78%); }
+body.milly-dark .welcome-overline { color: #92b8d7; }
+body.milly-dark .welcome-orbit { border-color: #344453; }
+body.milly-dark .welcome-orbit::before { border-color: #2a3946; }
+body.milly-dark .welcome-pane h1 { color: #e4edf5; }
+body.milly-dark .welcome-pane h1 em { color: #71b4e8; }
+body.milly-dark .welcome-pane>p, body.milly-dark .welcome-foot { color: #a0adbb; }
 body.milly-dark .friend-suggestion { color: #dce4ec; background: #222930; border-color: #36414c; }
 body.milly-dark .friend-suggestion:hover { background: #2b3640; border-color: #456078; }
 body.milly-dark .friend-suggestion-copy span { color: #a0adbb; }
@@ -424,9 +472,9 @@ body.milly-dark .call-mini-control { color: #c2cfdb; background: #2a333c; }
 .admin-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px; color: #75879d; background: transparent; border: 0; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600; }
 .admin-tabs button:hover { background: #f2f7fc; }
 .admin-tabs button.selected { color: #287cbd; background: #e9f5ff; }
-.admin-account-layout { display: grid; grid-template-columns: minmax(230px, .75fr) minmax(340px, 1.25fr); gap: 18px; width: min(100%, 1120px); min-height: 440px; margin: 0 auto; }
+.admin-account-layout { display: grid; grid-template-columns: minmax(200px, .55fr) minmax(460px, 1.45fr); gap: 18px; width: min(100%, 1400px); min-height: 520px; margin: 0 auto; }
 .admin-account-list, .admin-editor, .admin-empty, .admin-channels { background: #fff; border: 1px solid #e4ecf4; border-radius: 14px; box-shadow: 0 6px 22px #314d6908; }
-.admin-account-list { display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
+.admin-account-list { display: flex; min-height: 520px; flex-direction: column; overflow: hidden; }
 .admin-search { display: flex; align-items: center; gap: 9px; margin: 12px; padding: 0 11px; color: #8292a6; background: #f7faff; border: 1px solid #e3ebf3; border-radius: 9px; }
 .admin-search input { width: 100%; min-width: 0; height: 38px; padding: 0; background: transparent; border: 0; outline: 0; box-shadow: none !important; font-size: 12px; }
 .admin-results { flex: 1; overflow: auto; padding: 0 8px 8px; }
@@ -439,13 +487,17 @@ body.milly-dark .call-mini-control { color: #c2cfdb; background: #2a333c; }
 .admin-avatar { display: grid; flex: 0 0 36px; width: 36px; height: 36px; place-items: center; color: #397eae; background: linear-gradient(145deg, #e1f2ff, #d2eaff); border-radius: 11px; font-size: 13px; font-weight: 700; }
 .admin-avatar-large { flex-basis: 48px; width: 48px; height: 48px; border-radius: 14px; font-size: 17px; }
 .admin-state { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 90px; color: #8494a7; font-size: 12px; }
-.admin-editor { display: flex; flex-direction: column; gap: 15px; padding: clamp(16px, 3vw, 25px); }
+.admin-editor { display: flex; min-width: 0; flex-direction: column; gap: 15px; padding: clamp(20px, 3vw, 34px); }
+.admin-heading-actions { display: flex; align-items: center; flex: none; gap: 10px; }
+.admin-exit { display: inline-flex; align-items: center; min-height: 38px; gap: 7px; padding: 0 12px; font-size: 11px; }
 .admin-editor-heading { display: flex; align-items: center; gap: 12px; padding-bottom: 15px; border-bottom: 1px solid #edf1f6; }
 .admin-editor-heading h2, .admin-section-intro h2 { margin: 0 0 5px; color: #2b425b; font: 700 17px/1.3 var(--display); }
 .admin-editor-heading p { margin: 0; color: #8a9aad; font-size: 10px; overflow-wrap: anywhere; }
 .admin-editor label { display: flex; flex-direction: column; gap: 7px; color: #526b85; font-size: 11px; font-weight: 600; }
 .admin-editor input:not([type="checkbox"]), .admin-editor textarea { width: 100%; min-width: 0; padding: 10px 11px; font-size: 12px; }
 .admin-editor textarea { resize: vertical; }
+.admin-editor input:focus, .admin-editor textarea:focus { border-color: #cad7e4; outline: none; box-shadow: none; }
+.admin-search:focus-within { border-color: #d5e0eb; box-shadow: none; }
 .admin-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .admin-input-hint { color: #92a0b0; font-size: 10px; font-weight: 400; }
 .admin-check-field { display: flex !important; align-items: center; flex-direction: row !important; gap: 10px !important; padding: 11px 12px; background: #f7faff; border: 1px solid #e6edf5; border-radius: 9px; }
@@ -497,8 +549,9 @@ body.milly-dark .call-mini-control { color: #c2cfdb; background: #2a333c; }
 @media (max-width: 760px) {
   .admin-workspace { padding: 18px 14px; }
   .admin-account-layout { grid-template-columns: minmax(0, 1fr); }
-  .admin-account-list { max-height: 300px; }
+  .admin-account-list { min-height: 0; max-height: 300px; }
   .admin-empty { min-height: 140px; }
+  .admin-heading-actions { align-items: flex-end; flex-direction: column; }
 }
 @media (max-width: 500px) {
   .admin-heading { flex-direction: column; gap: 12px; }
@@ -889,3 +942,27 @@ body.milly-dark .setup-card pre {
 
   .search-box input:focus-visible, .composer textarea:focus-visible { outline: none; }
 }
+
+body.milly-dark .admin-account-list, body.milly-dark .admin-editor, body.milly-dark .admin-empty, body.milly-dark .admin-channels {
+  color: #dce4ec;
+  background: #222930;
+  border-color: #36414c;
+}
+body.milly-dark .admin-heading h1, body.milly-dark .admin-editor-heading h2, body.milly-dark .admin-section-intro h2 { color: #e0e7ef; }
+body.milly-dark .admin-heading p, body.milly-dark .admin-editor-heading p { color: #a0adbb; }
+body.milly-dark .admin-profile-row:hover { background: #2b333c; }
+body.milly-dark .admin-profile-row.selected { background: #293d50; }
+body.milly-dark .admin-profile-row strong { color: #dce4ec; }
+body.milly-dark .admin-profile-row small, body.milly-dark .admin-input-hint { color: #9eacba; }
+body.milly-dark .admin-editor label { color: #b7c5d2; }
+body.milly-dark .admin-editor input:not([type="checkbox"]), body.milly-dark .admin-editor textarea, body.milly-dark .admin-search {
+  color: #dce4ec;
+  background: #1a2026;
+  border-color: #36414c;
+}
+body.milly-dark .admin-editor input:focus, body.milly-dark .admin-editor textarea:focus, body.milly-dark .admin-search:focus-within { border-color: #526274; }
+body.milly-dark .admin-check-field, body.milly-dark .admin-date-card { background: #252d35; border-color: #36414c; }
+body.milly-dark .admin-check-field strong, body.milly-dark .admin-date-card strong { color: #dce4ec; }
+body.milly-dark .admin-check-field small, body.milly-dark .admin-date-card span, body.milly-dark .admin-date-card small { color: #a0adbb; }
+body.milly-dark .admin-editor-heading, body.milly-dark .admin-account-list { border-color: #36414c; }
+body.milly-dark .admin-exit { color: #c2cfdb; background: #2a333c; border-color: #3a4651; }

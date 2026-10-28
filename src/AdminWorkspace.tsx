@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { BadgeCheck, CalendarDays, LoaderCircle, Search, ShieldCheck, Users } from 'lucide-react'
+import { ArrowLeft, BadgeCheck, CalendarDays, LoaderCircle, Search, ShieldCheck, Users } from 'lucide-react'
 import { readableError } from './lib/supabase'
 
 type AdminProfile = {
@@ -57,7 +57,7 @@ function formFrom(profile: AdminProfile): ProfileForm {
   }
 }
 
-export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
+export default function AdminWorkspace({ client, onExit }: { client: SupabaseClient; onExit: () => void }) {
   const [section, setSection] = useState<'accounts' | 'spaces'>('accounts')
   const [query, setQuery] = useState('')
   const [profiles, setProfiles] = useState<AdminProfile[]>([])
@@ -243,7 +243,7 @@ export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
   }
 
   return <section className="admin-workspace">
-    <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div></header>
+    <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-heading-actions"><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div><button type="button" className="secondary-button admin-exit" onClick={onExit}><ArrowLeft size={15} /> Выйти из панели</button></div></header>
     <nav className="admin-tabs" aria-label="Разделы панели администратора">
       <button className={section === 'accounts' ? 'selected' : ''} onClick={() => setSection('accounts')}><Users size={16} /> Аккаунты</button>
     </nav>
