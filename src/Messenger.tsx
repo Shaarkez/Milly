@@ -143,6 +143,8 @@ export default function Messenger() {
   const [groupCreating, setGroupCreating] = useState(false)
   const [groupEditOpen, setGroupEditOpen] = useState(false)
   const [groupEditDraft, setGroupEditDraft] = useState({ name: '', username: '', description: '' })
+  const [groupEditAvatarFile, setGroupEditAvatarFile] = useState<File | null>(null)
+  const [groupEditAvatarPreview, setGroupEditAvatarPreview] = useState('')
   const [groupInviteSearch, setGroupInviteSearch] = useState('')
   const [groupInviteIds, setGroupInviteIds] = useState<Set<string>>(new Set())
   const [groupSaving, setGroupSaving] = useState(false)
@@ -194,6 +196,7 @@ export default function Messenger() {
   const fileRef = useRef<HTMLInputElement>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
   const groupAvatarRef = useRef<HTMLInputElement>(null)
+  const groupEditAvatarRef = useRef<HTMLInputElement>(null)
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const ringtoneContext = useRef<AudioContext | null>(null)
@@ -381,6 +384,16 @@ export default function Messenger() {
     setGroupAvatarPreview(preview)
     return () => URL.revokeObjectURL(preview)
   }, [groupAvatarFile])
+
+  useEffect(() => {
+    if (!groupEditAvatarFile) {
+      setGroupEditAvatarPreview('')
+      return
+    }
+    const preview = URL.createObjectURL(groupEditAvatarFile)
+    setGroupEditAvatarPreview(preview)
+    return () => URL.revokeObjectURL(preview)
+  }, [groupEditAvatarFile])
 
   useEffect(() => {
     const context = ringtoneContext.current
@@ -1413,23 +1426,57 @@ export default function Messenger() {
       setError('Описание группы должно содержать не более 160 символов.')
       return
     }
+    if (groupEditAvatarFile && !isAllowedImage(groupEditAvatarFile.type, groupEditAvatarFile.size, 5 * 1024 * 1024)) {
+      setError('Выберите JPEG, PNG, WebP или AVIF размером до 5 МБ.')
+      return
+    }
     setGroupSaving(true)
     setError('')
     try {
+      let avatarPath = active.group.avatar_path
+      let avatarUrl = active.group.avatar_url
+      let uploadedAvatarPath: string | null = null
+      if (groupEditAvatarFile) {
+        const extension = groupEditAvatarFile.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+        uploadedAvatarPath = `${user.id}/groups/${active.group.id}-${crypto.randomUUID()}.${extension}`
+        const { error: uploadError } = await client.storage.from('milly-avatars').upload(uploadedAvatarPath, groupEditAvatarFile, { contentType: groupEditAvatarFile.type })
+        if (uploadError) throw uploadError
+        avatarPath = uploadedAvatarPath
+      }
       const { error: failure } = await client.from('groups')
-        .update({ name, description: description || null, public_username: username || null })
+        .update({ name, description: description || null, public_username: username || null, ...(uploadedAvatarPath ? { avatar_path: uploadedAvatarPath } : {}) })
         .eq('id', active.group.id)
-      if (failure) throw failure
-      const group = { ...active.group, name, description: description || null, public_username: username || null }
+      if (failure) {
+        if (uploadedAvatarPath) {
+          const { error: cleanupError } = await client.storage.from('milly-avatars').remove([uploadedAvatarPath])
+          if (cleanupError) throw new Error(`${readableError(failure)}; Не удалось удалить загруженный аватар: ${readableError(cleanupError)}`)
+        }
+        throw failure
+      }
+      let avatarWarning = ''
+      if (uploadedAvatarPath) {
+        const { data: signed, error: signedError } = await client.storage.from('milly-avatars').createSignedUrl(uploadedAvatarPath, 3600)
+        if (signedError) {
+          avatarWarning = `Настройки сохранены, но не удалось обновить ссылку на аватар: ${readableError(signedError)}`
+          avatarUrl = undefined
+        } else if (signed?.signedUrl) {
+          avatarUrl = signed.signedUrl
+          signedAvatarUrls.current.set(uploadedAvatarPath, { url: signed.signedUrl, expiresAt: Date.now() + 3600_000 })
+        }
+        if (active.group.avatar_path) signedAvatarUrls.current.delete(active.group.avatar_path)
+      }
+      const group = { ...active.group, name, description: description || null, public_username: username || null, avatar_path: avatarPath, avatar_url: avatarUrl }
       const updated = {
         ...active,
         group,
-        peer: { ...active.peer, display_name: name, username: username || '' },
+        peer: { ...active.peer, display_name: name, username: username || '', avatar_path: avatarPath, avatar_url: avatarUrl },
       }
       setConversations((current) => current.map((conversation) => conversation.id === active.id ? updated : conversation))
       setActive(updated)
+      setGroupEditAvatarFile(null)
       setGroupEditOpen(false)
-      setNotice('Настройки группы сохранены.')
+      setTopNotice('Настройки группы сохранены.')
+      if (avatarWarning) setError(avatarWarning)
     } catch (caught) {
       setError(readableError(caught))
     } finally {
@@ -2195,7 +2242,7 @@ export default function Messenger() {
         </div>)}</div>
       </section>
       {groupActionError && <p className="group-action-error" role="alert">{groupActionError}</p>}
-      {active.group.created_by === user?.id && <div className="profile-sidebar-actions"><button className="primary-button" onClick={() => { setGroupEditDraft({ name: active.group!.name, username: active.group!.public_username ?? '', description: active.group!.description ?? '' }); setGroupInviteIds(new Set()); setGroupInviteSearch(''); setGroupDeleteConfirm(false); setGroupEditOpen(true); setError(''); setGroupActionError('') }}><Settings2 size={15} /> Редактировать группу</button></div>}
+      {active.group.created_by === user?.id && <div className="profile-sidebar-actions"><button className="primary-button" onClick={() => { setGroupEditDraft({ name: active.group!.name, username: active.group!.public_username ?? '', description: active.group!.description ?? '' }); setGroupEditAvatarFile(null); setGroupInviteIds(new Set()); setGroupInviteSearch(''); setGroupDeleteConfirm(false); setGroupEditOpen(true); setError(''); setGroupActionError('') }}><Settings2 size={15} /> Редактировать группу</button></div>}
     </div>
   </aside>}
   {profilePanelOpen && profileToView && !active?.group && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя">
@@ -2230,6 +2277,7 @@ export default function Messenger() {
   {groupEditOpen && active?.group && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !groupSaving && !groupDeleting && !groupInviting) { setGroupEditOpen(false); setGroupDeleteConfirm(false) } }}>
     <form className="modal group-edit-modal" role="dialog" aria-modal="true" aria-labelledby="group-edit-title" onSubmit={(event) => void saveGroupDetails(event)}>
       <div className="modal-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ ГРУППОЙ</span><h2 id="group-edit-title">Редактировать группу</h2></div><button type="button" className="icon-button" aria-label="Закрыть" disabled={groupSaving || groupDeleting || groupInviting} onClick={() => { setGroupEditOpen(false); setGroupDeleteConfirm(false) }}><X size={18} /></button></div>
+      <div className="group-edit-avatar-row"><input ref={groupEditAvatarRef} type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden onChange={(event) => { setGroupEditAvatarFile(event.target.files?.[0] ?? null); event.target.value = '' }} /><button type="button" className="group-avatar-picker group-edit-avatar-picker" disabled={groupSaving} onClick={() => groupEditAvatarRef.current?.click()} aria-label="Изменить аватар группы"><Avatar name={active.group.name} large image={groupEditAvatarPreview || (groupEditAvatarFile ? undefined : active.group.avatar_url)} onImageError={!groupEditAvatarFile && active.group.avatar_path ? () => void refreshAvatar(active.group!.avatar_path!) : undefined} /><span><ImagePlus size={15} /></span></button><span><strong>Аватар группы</strong><small>Нажмите, чтобы выбрать новое изображение</small></span></div>
       <label className="group-edit-field">Название<input value={groupEditDraft.name} onChange={(event) => setGroupEditDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Название группы" maxLength={40} required /></label>
       <label className="group-edit-field">Описание группы<textarea value={groupEditDraft.description} onChange={(event) => setGroupEditDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Расскажите, о чём эта группа" maxLength={160} rows={3} /></label>
       <label className="group-edit-field">Публичный username<input value={groupEditDraft.username} onChange={(event) => setGroupEditDraft((current) => ({ ...current, username: event.target.value }))} placeholder="Необязательно, например milly_friends" maxLength={25} autoCapitalize="off" autoComplete="off" spellCheck={false} /><small>3–24 символа: латинские буквы, цифры и подчёркивание. Оставьте поле пустым, чтобы убрать username.</small></label>

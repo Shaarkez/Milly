@@ -172,7 +172,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .account-menu>button:first-of-type { margin-top: 3px; }
 .account-menu>button:hover { color: #347fbd; background: #f0f7fd; }
 .account-menu>button svg { color: #6b91b2; }
-.account-menu>button.account-menu-signout { margin-top: 8px; padding-top: 0; color: #536981; border-top: 1px solid #edf1f6; border-radius: 7px; }
+.account-menu>button.account-menu-signout { margin-top: 8px; padding-top: 2px; color: #536981; border-top: 1px solid #edf1f6; border-radius: 7px; }
 .chat-avatar-button { display: grid; flex: none; padding: 0; place-items: center; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .chat-person-button { min-width: 0; padding: 0; text-align: left; background: transparent; border: 0; cursor: pointer; }
 .header-actions .video-call-button { color: #568fbe; }
@@ -271,6 +271,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-avatar-picker { position: relative; flex: 0 0 64px; width: 64px; height: 64px; padding: 0; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .group-avatar-picker .avatar { width: 55px; height: 55px; flex-basis: 55px; font-size: 17px; }
 .group-avatar-picker>span:last-child { position: absolute; right: -2px; bottom: -1px; display: grid; width: 25px; height: 25px; place-items: center; color: #fff; background: #368fce; border: 2px solid #fff; border-radius: 50%; }
+.group-edit-avatar-row { display: flex; align-items: center; gap: 12px; margin: 15px 0 4px; }
+.group-edit-avatar-row>span { display: flex; flex-direction: column; gap: 4px; }
+.group-edit-avatar-row>span strong { color: #405972; font-size: 12px; }
+.group-edit-avatar-row>span small { color: #8293a6; font-size: 11px; }
+.group-edit-avatar-picker { flex: 0 0 64px; }
+.group-edit-avatar-picker .avatar { width: 55px; height: 55px; flex-basis: 55px; font-size: 17px; }
 .group-name-field { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 6px; color: transparent; font-size: 0; font-weight: 600; }
 .group-name-field input { width: 100%; height: 40px; padding: 0 11px; color: #2b4058; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: 0; }
 .group-name-field input:focus { border-color: #dfe9f3; box-shadow: none; outline: none; }
@@ -305,7 +311,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-delete-confirm .confirm-actions button { flex: 1; min-height: 39px; }
 .group-delete-confirm .confirm-actions .primary-button.danger-button { color: #b94f59; background: #ffe9e9; border-color: #f3d1d1; box-shadow: none; }
 .group-delete-confirm .confirm-actions .primary-button.danger-button:hover:not(:disabled) { color: #a63e49; background: #ffdddd; border-color: #eabebe; }
-.group-profile-sidebar .profile-sidebar-hero { border-bottom: 0; }
+.group-profile-sidebar .profile-sidebar-hero { padding-top: 82px; border-bottom: 0; }
 .group-profile-sidebar .profile-sidebar-hero::before { height: 136px; }
 .group-profile-username { margin-top: 6px; font-size: 14px; }
 .group-profile-members { display: flex; flex-direction: column; gap: 9px; padding: 9px 0; }
@@ -446,6 +452,8 @@ body.milly-dark .primary-button.danger-button:hover:not(:disabled) { color: #ffc
 body.milly-dark .profile-alias-copy, body.milly-dark .profile-aliases .profile-alias-copy { color: #9cccf0; }
 body.milly-dark .group-create-modal { color: #dce4ec; }
 body.milly-dark .group-avatar-picker>span:last-child { border-color: #222930; }
+body.milly-dark .group-edit-avatar-row>span strong { color: #dce4ec; }
+body.milly-dark .group-edit-avatar-row>span small { color: #9aa8b6; }
 body.milly-dark .group-name-field { color: #a0adbb; }
 body.milly-dark .group-name-field input { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
 body.milly-dark .group-name-field input:focus { border-color: #3b4651; box-shadow: none; outline: none; }
