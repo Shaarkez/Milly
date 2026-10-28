@@ -136,6 +136,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .request-row { background: #f7faff; }
 .verified-mark { display: inline-block; flex: none; margin-left: 5px; color: #398fd2; vertical-align: -2px; }
 .profile-aliases { max-width: 100%; color: #4387bc !important; overflow-wrap: anywhere; }
+.profile-identity>small.profile-aliases { display: block; line-height: 1.6; }
 .profile-date { color: #72859b !important; }
 
 .sidebar { flex-basis: 350px; min-width: 320px; }
@@ -209,8 +210,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #303b46; background: #e3e9ee; border-color: #d8e0e7; transform: none; }
 .primary-button.danger-button { color: #b94f59; background: #fff0f0; border: 1px solid #f6dada; box-shadow: none; }
 .primary-button.danger-button:hover:not(:disabled) { color: #a63e49; background: #ffe6e6; border-color: #efcaca; }
-.verified-badge { display: inline-grid; flex: none; width: 18px; height: 18px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; clip-path: polygon(50% 0%, 64% 15%, 85% 15%, 85% 36%, 100% 50%, 85% 64%, 85% 85%, 64% 85%, 50% 100%, 36% 85%, 15% 85%, 15% 64%, 0% 50%, 15% 36%, 15% 15%, 36% 15%); vertical-align: middle; }
-.verified-badge svg { display: block; width: 10px; height: 10px; color: #fff; stroke: currentColor; }
+.verified-badge { display: inline-grid; flex: none; width: 16px; height: 16px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; clip-path: polygon(50% 0%, 64% 15%, 85% 15%, 85% 36%, 100% 50%, 85% 64%, 85% 85%, 64% 85%, 50% 100%, 36% 85%, 15% 85%, 15% 64%, 0% 50%, 15% 36%, 15% 15%, 36% 15%); vertical-align: middle; }
+.verified-badge svg { display: block; width: 9px; height: 9px; color: #fff; stroke: currentColor; }
 .chat-person .verified-badge { color: #fff; }
 .chat-info-banner { display: flex; align-items: stretch; align-self: center; width: min(100%, 500px); flex-direction: column; margin: 0 auto 17px; padding: 20px; color: #52677e; background: #fff; border: 1px solid #e1ebf5; border-radius: 17px; box-shadow: 0 5px 18px #3355760a; }
 .chat-info-banner-identity { display: flex; align-items: center; flex-direction: column; gap: 8px; padding-bottom: 14px; }
@@ -275,6 +276,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-edit-modal { width: min(100%, 470px); max-height: min(88vh, 760px); overflow-y: auto; }
 .group-edit-field { display: flex; flex-direction: column; gap: 6px; margin-top: 15px; color: #526a84; font-size: 12px; font-weight: 600; }
 .group-edit-field input { width: 100%; height: 42px; padding: 0 12px; color: #2b4058; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: none; box-shadow: none; font-size: 14px; transition: border-color .16s, background .16s; }
+.group-edit-field textarea { width: 100%; min-height: 76px; resize: vertical; padding: 10px 12px; color: #2b4058; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: none; box-shadow: none; font: inherit; font-size: 13px; line-height: 1.45; transition: border-color .16s, background .16s; }
+.group-edit-field textarea:hover { border-color: #cbd9e6; }
+.group-edit-field textarea:focus, .group-edit-field textarea:focus-visible { border-color: #9fc9e9; outline: none; box-shadow: 0 0 0 2px #88c4f21b; }
+.group-edit-field textarea::placeholder { color: #9aa9b9; font-size: 13px; font-weight: 400; }
 .group-edit-field input:hover { border-color: #cbd9e6; }
 .group-edit-field input:focus, .group-edit-field input:focus-visible, .group-edit-modal .modal-heading~label input:focus { border-color: #9fc9e9; outline: none; box-shadow: 0 0 0 2px #88c4f21b; }
 .group-edit-field input::placeholder, .group-name-field input::placeholder { color: #9aa9b9; font-size: 13px; font-weight: 400; }
@@ -284,6 +289,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-invite-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: #405972; }
 .group-invite-heading strong { font-size: 12px; font-weight: 700; }
 .group-invite-heading small { color: #8293a6; font-size: 11px; }
+.group-member-search { width: 100%; height: 36px; margin: 5px 0 7px; padding: 0 10px; color: #354b64; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: none; font-size: 12px; }
+.group-member-search:focus { border-color: #9fc9e9; box-shadow: 0 0 0 2px #88c4f21b; }
 .group-invite-list { display: flex; max-height: min(28vh, 220px); flex-direction: column; gap: 4px; overflow-y: auto; }
 .group-invite-submit { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; min-height: 38px; margin-top: 8px; }
 .group-edit-actions { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
@@ -301,8 +308,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-profile-members { display: flex; flex-direction: column; gap: 9px; padding: 9px 0; }
 .group-profile-info-list>div:last-child { border-bottom: 0; }
 .group-profile-info-list { padding-bottom: 4px; border-bottom: 1px solid #e8eef4; }
-.group-profile-members-section { width: 100%; margin-top: 8px; }
-.group-profile-members-heading { display: flex; align-items: center; gap: 9px; padding: 10px 0; color: #405972; }
+.group-profile-description { margin: 0 0 8px; color: #627891; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.group-profile-members-section { width: 100%; margin-top: 0; }
+.group-profile-members-heading { display: flex; align-items: center; gap: 9px; padding: 5px 0 8px; color: #405972; }
 .group-profile-members-heading .profile-info-icon { flex: 0 0 34px; }
 .group-profile-members-heading strong { color: #405972; font-size: 12px; font-weight: 600; }
 .group-profile-members-heading small { margin-left: auto; color: #8293a6; font-size: 12px; }
@@ -353,6 +361,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .message-actions-menu>button:hover { background: #f0f6fb; }
 .message-actions-menu>button.message-action-delete { color: #fff; background: #c25f69; }
 .message-actions-menu>button.message-action-delete:hover { color: #fff; background: #ad4d57; }
+body.milly-dark .message-actions-menu>button.message-action-delete { color: #fff; background: #a64f59; }
+body.milly-dark .message-actions-menu>button.message-action-delete:hover { color: #fff; background: #bd5b66; }
 .message-action-reactions { display: flex; justify-content: space-around; padding: 4px 2px 8px; border-bottom: 1px solid #edf1f6; }
 .message-action-reactions button { width: 42px; height: 36px; background: transparent; border: 0; border-radius: 8px; cursor: pointer; font-size: 20px; }
 .message-action-reactions button:hover { background: #eef6fd; }
@@ -438,12 +448,19 @@ body.milly-dark .group-name-field input:focus { border-color: #3b4651; box-shado
 body.milly-dark .group-edit-field { color: #bdc9d5; }
 body.milly-dark .group-edit-field small, body.milly-dark .group-profile-member small { color: #9aa8b6; }
 body.milly-dark .group-profile-member strong { color: #dce4ec; }
+body.milly-dark .group-profile-description { color: #a9bacb; }
 body.milly-dark .group-profile-members-heading, body.milly-dark .group-profile-members-heading strong { color: #dce4ec; }
 body.milly-dark .group-profile-members-heading small { color: #9aa8b6; }
 body.milly-dark .group-profile-info-list, body.milly-dark .group-profile-member { border-color: #343e48; }
 body.milly-dark .group-profile-member-role { color: #b7c8d8; background: #2a333c; }
 body.milly-dark .group-action-error { color: #f0c4c8; background: #38282b; border-color: #604047; }
 body.milly-dark .group-edit-field input { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
+body.milly-dark .group-edit-field textarea { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
+body.milly-dark .group-edit-field textarea:hover { border-color: #526170; }
+body.milly-dark .group-edit-field textarea:focus, body.milly-dark .group-edit-field textarea:focus-visible { border-color: #526f88; outline: none; box-shadow: 0 0 0 2px #82b8e21b; }
+body.milly-dark .group-edit-field textarea::placeholder { color: #9aa8b6; }
+body.milly-dark .group-member-search { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
+body.milly-dark .group-member-search:focus { border-color: #526f88; box-shadow: 0 0 0 2px #82b8e21b; }
 body.milly-dark .group-edit-field input:hover { border-color: #526170; }
 body.milly-dark .group-edit-field input:focus, body.milly-dark .group-edit-field input:focus-visible { border-color: #526f88; outline: none; box-shadow: 0 0 0 2px #82b8e21b; }
 body.milly-dark .group-edit-modal .form-kicker, body.milly-dark .group-create-modal .form-kicker { color: #9cccf0; }
