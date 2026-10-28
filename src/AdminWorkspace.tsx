@@ -71,10 +71,12 @@ function formFrom(profile: AdminProfile): ProfileForm {
 export default function AdminWorkspace({ client, onExit }: { client: SupabaseClient; onExit: () => void }) {
   const [section, setSection] = useState<'accounts' | 'groups' | 'spaces'>('accounts')
   const [query, setQuery] = useState('')
+  const [groupQuery, setGroupQuery] = useState('')
   const [profiles, setProfiles] = useState<AdminProfile[]>([])
   const [spaces, setSpaces] = useState<AdminSpace[]>([])
   const [channels, setChannels] = useState<AdminChannel[]>([])
   const [groups, setGroups] = useState<AdminGroup[]>([])
+  const [selectedGroupId, setSelectedGroupId] = useState('')
   const [selectedId, setSelectedId] = useState('')
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [countDrafts, setCountDrafts] = useState<Record<string, string>>({})
@@ -89,6 +91,12 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
   const [sidebarElement, setSidebarElement] = useState<HTMLElement | null>(null)
   const selected = profiles.find((profile) => profile.id === selectedId)
   const normalizedQuery = useMemo(() => query.trim(), [query])
+  const normalizedGroupQuery = useMemo(() => groupQuery.trim().replace(/^[@#]/, '').toLowerCase(), [groupQuery])
+  const visibleGroups = useMemo(() => groups.filter((group) => !normalizedGroupQuery
+    || group.name.toLowerCase().includes(normalizedGroupQuery)
+    || (group.public_username ?? '').toLowerCase().includes(normalizedGroupQuery)
+    || group.id.toLowerCase().startsWith(normalizedGroupQuery)), [groups, normalizedGroupQuery])
+  const selectedGroup = visibleGroups.find((group) => group.id === selectedGroupId)
 
   useEffect(() => {
     setSidebarElement(document.querySelector<HTMLElement>('.messenger-shell > .sidebar'))
@@ -160,6 +168,12 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
     void loadSpaces()
     return () => { cancelled = true }
   }, [client])
+
+  useEffect(() => {
+    if (!visibleGroups.some((group) => group.id === selectedGroupId)) {
+      setSelectedGroupId(visibleGroups[0]?.id ?? '')
+    }
+  }, [selectedGroupId, visibleGroups])
 
   async function saveSpace(space: AdminSpace) {
     const draft = spaceDrafts[space.id]
@@ -297,17 +311,29 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
   }, [client])
 
   return <>
-    {section === 'accounts' && sidebarElement && createPortal(<aside className="admin-account-list">
-      <div className="admin-sidebar-heading"><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><strong>Аккаунты</strong></div>
-      <label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Имя, @username или #ID" /></label>
-      <div className="admin-results">
-        {loading && <div className="admin-state"><LoaderCircle className="spin" size={18} /> Ищем аккаунты…</div>}
-        {!loading && !profiles.length && <div className="admin-state">Аккаунтов не найдено.</div>}
-        {profiles.map((person) => <button key={person.id} className={`admin-profile-row${person.id === selectedId ? ' selected' : ''}`} onClick={() => setSelectedId(person.id)}>
-          <span className="admin-avatar">{person.display_name.slice(0, 1).toUpperCase()}</span>
-          <span><strong>{person.display_name}{person.is_verified && <BadgeCheck size={13} />}</strong><small>#{person.user_number} · @{person.username}</small></span>
-        </button>)}
-      </div>
+    {(section === 'accounts' || section === 'groups') && sidebarElement && createPortal(<aside className="admin-account-list">
+      <div className="admin-sidebar-heading"><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><strong>{section === 'groups' ? 'Группы' : 'Аккаунты'}</strong></div>
+      {section === 'accounts' ? <>
+        <label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Имя, @username или #ID" /></label>
+        <div className="admin-results">
+          {loading && <div className="admin-state"><LoaderCircle className="spin" size={18} /> Ищем аккаунты…</div>}
+          {!loading && !profiles.length && <div className="admin-state">Аккаунтов не найдено.</div>}
+          {profiles.map((person) => <button key={person.id} className={`admin-profile-row${person.id === selectedId ? ' selected' : ''}`} onClick={() => setSelectedId(person.id)}>
+            <span className="admin-avatar">{person.display_name.slice(0, 1).toUpperCase()}</span>
+            <span><strong>{person.display_name}{person.is_verified && <BadgeCheck size={13} />}</strong><small>#{person.user_number} · @{person.username}</small></span>
+          </button>)}
+        </div>
+      </> : <>
+        <label className="admin-search"><Search size={16} /><input value={groupQuery} onChange={(event) => setGroupQuery(event.target.value)} placeholder="Название, @username или ID" /></label>
+        <div className="admin-results">
+          {groupsLoading && <div className="admin-state"><LoaderCircle className="spin" size={18} /> Ищем группы…</div>}
+          {!groupsLoading && !visibleGroups.length && <div className="admin-state">Групп не найдено.</div>}
+          {visibleGroups.map((group) => <button key={group.id} className={`admin-profile-row${group.id === selectedGroupId ? ' selected' : ''}`} onClick={() => setSelectedGroupId(group.id)}>
+            <span className="admin-avatar">{group.name.slice(0, 1).toUpperCase()}</span>
+            <span><strong>{group.name}{group.is_verified && <BadgeCheck size={13} />}</strong><small>{group.public_username ? `@${group.public_username}` : `${group.member_count} участников`}</small></span>
+          </button>)}
+        </div>
+      </>}
     </aside>, sidebarElement)}
   <section className="admin-workspace">
     <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-heading-actions"><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div><button type="button" className="secondary-button admin-exit" onClick={onExit}><ArrowLeft size={15} /> Выйти из панели</button></div></header>
@@ -334,10 +360,10 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
       </form> : <div className="admin-empty">Выберите аккаунт слева, чтобы открыть редактор.</div>}
     </div> : section === 'groups' ? <section className="admin-channels admin-groups">
       <div className="admin-section-intro"><h2>Групповые чаты</h2><p>Выдавайте и снимайте подтверждение группы. Доступ к управлению проверяется в Supabase.</p></div>
-      {groupsLoading ? <div className="admin-state"><LoaderCircle className="spin" size={18} /> Загружаем группы…</div> : groups.length ? groups.map((group) => <article key={group.id} className="admin-space-card admin-group-card">
-        <div className="admin-space-card-heading"><div className="admin-space-icon"><Users size={17} /></div><div className="admin-space-copy"><strong>{group.name}{group.is_verified && <BadgeCheck size={14} />}</strong><span>{group.public_username ? `@${group.public_username} · ` : ''}{group.member_count} участников · создана {formatDate(group.created_at)}</span></div></div>
-        <label className="admin-check-field"><input type="checkbox" checked={group.is_verified} disabled={saving} onChange={(event) => void setGroupVerification(group, event.target.checked)} /><span><strong>Подтверждённая группа</strong><small>Показывать синюю отметку рядом с названием</small></span><BadgeCheck size={19} /></label>
-      </article>) : <div className="admin-state">Групп пока нет.</div>}
+      {groupsLoading ? <div className="admin-state"><LoaderCircle className="spin" size={18} /> Загружаем группы…</div> : selectedGroup ? <article className="admin-space-card admin-group-card">
+        <div className="admin-space-card-heading"><div className="admin-space-icon"><Users size={17} /></div><div className="admin-space-copy"><strong>{selectedGroup.name}{selectedGroup.is_verified && <BadgeCheck size={14} />}</strong><span>{selectedGroup.public_username ? `@${selectedGroup.public_username} · ` : ''}{selectedGroup.member_count} участников · создана {formatDate(selectedGroup.created_at)}</span></div></div>
+        <label className="admin-check-field"><input type="checkbox" checked={selectedGroup.is_verified} disabled={saving} onChange={(event) => void setGroupVerification(selectedGroup, event.target.checked)} /><span><strong>Подтверждённая группа</strong><small>Показывать синюю отметку рядом с названием</small></span><BadgeCheck size={19} /></label>
+      </article> : <div className="admin-state">{groups.length ? 'По запросу ничего не найдено.' : 'Групп пока нет.'}</div>}
       {error && <p className="admin-error" role="alert">{error}</p>}
       {notice && <p className="admin-notice" role="status">{notice}</p>}
     </section> : <section className="admin-channels">

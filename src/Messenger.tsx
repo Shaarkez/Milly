@@ -141,6 +141,7 @@ export default function Messenger() {
   const [groupSaving, setGroupSaving] = useState(false)
   const [groupDeleting, setGroupDeleting] = useState(false)
   const [groupDeleteConfirm, setGroupDeleteConfirm] = useState(false)
+  const [groupActionError, setGroupActionError] = useState('')
   const [messageToDelete, setMessageToDelete] = useState<Message | null>(null)
   const [imageToView, setImageToView] = useState<{ url: string; alt: string } | null>(null)
   const [messageActions, setMessageActions] = useState<Message | null>(null)
@@ -229,8 +230,8 @@ export default function Messenger() {
     setMessageActions(null)
     setActive(conversation)
     setProfileToView(conversation.peer)
+    setGroupActionError('')
     if (conversation.group) setProfilePanelOpen(true)
-    else if (active?.group) setProfilePanelOpen(false)
   }
 
   function hydrateConversationCache(userId: string) {
@@ -689,6 +690,7 @@ export default function Messenger() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_low=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_high=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'group_members', filter: `user_id=eq.${user.id}` }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'group_members' }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
         const deletedId = old.id
         if (typeof deletedId !== 'string') return
@@ -1264,7 +1266,7 @@ export default function Messenger() {
     }
   }
 
-  async function openChat(friend: Profile) {
+  async function openChat(friend: Profile, showProfile?: boolean) {
     if (!client || !user) return
     setError('')
     try {
@@ -1297,7 +1299,7 @@ export default function Messenger() {
         : { id: data as string, user_low: user.id < friend.id ? user.id : friend.id, user_high: user.id < friend.id ? friend.id : user.id, updated_at: new Date().toISOString(), peer }
       if (!conversations.some((row) => row.id === conversation.id)) setConversations((current) => [conversation, ...current])
       else setConversations((current) => current.map((row) => row.id === conversation.id ? { ...row, peer } : row))
-      activateConversation(conversation); setDialog(null); setSection('chats'); setProfilePanelOpen(false); setNotice('')
+      activateConversation(conversation); setDialog(null); setSection('chats'); setProfilePanelOpen(showProfile ?? profilePanelOpen); setNotice('')
     } catch (caught) {
       setError(readableError(caught))
     }
@@ -1443,6 +1445,38 @@ export default function Messenger() {
       setError(readableError(caught))
     } finally {
       setGroupDeleting(false)
+    }
+  }
+
+  async function removeGroupMember(member: Profile) {
+    if (!client || !active?.group || !user) return
+    if (member.id === active.group.created_by) {
+      setGroupActionError('Создатель не может покинуть группу. Сначала удалите группу.')
+      return
+    }
+    setGroupActionError('')
+    try {
+      const { error: failure } = await client.rpc('remove_group_member', {
+        p_group_id: active.group.id,
+        p_member_id: member.id,
+      })
+      if (failure) throw failure
+      if (member.id === user.id) {
+        setConversations((current) => current.filter((conversation) => conversation.id !== active.group?.id))
+        messageCache.current.delete(active.group.id)
+        setActive(null)
+        setMessages([])
+        setProfilePanelOpen(false)
+        localStorage.removeItem(activeConversationKey(user.id))
+        setTopNotice('Вы покинули группу.')
+      } else {
+        setConversations((current) => current.map((conversation) => conversation.id === active.group?.id
+          ? { ...conversation, groupMembers: conversation.groupMembers?.filter((item) => item.id !== member.id) }
+          : conversation))
+        setTopNotice(`${member.display_name} удалён из группы.`)
+      }
+    } catch (caught) {
+      setGroupActionError(readableError(caught))
     }
   }
 
@@ -2104,11 +2138,22 @@ export default function Messenger() {
         <strong>{active.group.name}{active.group.is_verified && <span className="verified-badge" aria-label="Подтверждённая группа"><Check size={11} strokeWidth={3} /></span>}</strong>
         {active.group.public_username && <button type="button" className="profile-username-copy group-profile-username" onClick={() => void copyAlias(active.group!.public_username!)}>@{active.group.public_username}</button>}
       </div>
-      <div className="profile-info-list">
+      <div className="profile-info-list group-profile-info-list">
         <div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата создания</small><strong>{profileDate(active.group.created_at)}</strong></span></div>
         <div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong className={active.group.is_verified ? 'chat-info-positive' : ''}>{active.group.is_verified ? 'Подтверждена' : 'Нет'}</strong></span></div>
-        <div><span className="profile-info-icon"><Users size={15} /></span><span><small>Участники · {active.groupMembers?.length ?? 0}</small><span className="group-profile-members">{active.groupMembers?.map((member) => <span className="group-profile-member" key={member.id}><Avatar name={member.display_name} image={member.avatar_url} onImageError={member.avatar_path ? () => void refreshAvatar(member.avatar_path!) : undefined} /><span><strong>{member.display_name}{member.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={9} strokeWidth={3} /></span>}</strong><small>{member.id === active.group?.created_by ? 'Создатель' : `@${member.username}`}</small></span></span>)}</span></span></div>
       </div>
+      <section className="group-profile-members-section" aria-label="Участники группы">
+        <header className="group-profile-members-heading"><span className="profile-info-icon"><Users size={16} /></span><strong>Участники</strong><small>{active.groupMembers?.length ?? 0}</small></header>
+        <div className="group-profile-members">{[...(active.groupMembers ?? [])].sort((left, right) => Number(right.id === active.group?.created_by) - Number(left.id === active.group?.created_by)).map((member) => <div className="group-profile-member" key={member.id}>
+          <button type="button" className="group-profile-member-open" onClick={() => void openChat(member, true)} aria-label={`Открыть чат с ${member.display_name}`}>
+            <Avatar name={member.display_name} image={member.avatar_url} onImageError={member.avatar_path ? () => void refreshAvatar(member.avatar_path!) : undefined} />
+            <span className="group-profile-member-copy"><strong>{member.display_name}{member.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={9} strokeWidth={3} /></span>}</strong><small>@{member.username}</small></span>
+          </button>
+          {member.id === active.group?.created_by && <span className="group-profile-member-role">Создатель</span>}
+          {member.id !== active.group?.created_by && (member.id === user?.id || active.group?.created_by === user?.id) && <button type="button" className="group-profile-member-remove" aria-label={member.id === user?.id ? 'Покинуть группу' : `Удалить ${member.display_name} из группы`} title={member.id === user?.id ? 'Покинуть группу' : 'Удалить из группы'} onClick={() => void removeGroupMember(member)}><X size={15} /></button>}
+        </div>)}</div>
+      </section>
+      {groupActionError && <p className="group-action-error" role="alert">{groupActionError}</p>}
       {active.group.created_by === user?.id && <div className="profile-sidebar-actions"><button className="primary-button" onClick={() => { setGroupEditDraft({ name: active.group!.name, username: active.group!.public_username ?? '' }); setGroupDeleteConfirm(false); setGroupEditOpen(true); setError('') }}><Settings2 size={15} /> Редактировать группу</button></div>}
     </div>
   </aside>}
@@ -2127,7 +2172,7 @@ export default function Messenger() {
         <div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div>
         <div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div>
         <div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>
-        {Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><span className="profile-alias-list">{profileToView.aliases?.map((alias) => <button key={alias} type="button" className="profile-alias-copy" onClick={() => void copyAlias(alias)}>@{alias}</button>)}</span></span></div>}
+        {Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><span className="profile-alias-list">{profileToView.aliases?.map((alias, index) => <Fragment key={alias}>{index > 0 && <span className="profile-alias-separator">, </span>}<button type="button" className="profile-alias-copy" onClick={() => void copyAlias(alias)}>@{alias}</button></Fragment>)}</span></span></div>}
       </div>
       <div className="profile-sidebar-actions">
         <button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button>
