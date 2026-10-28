@@ -14,6 +14,10 @@ body {
   background: var(--bg);
 }
 
+.message-row {
+  align-items: flex-start;
+}
+
 .messenger-shell {
   background:
     radial-gradient(ellipse at 70% 12%, #5144a00f, transparent 37%),
