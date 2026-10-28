@@ -77,12 +77,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .secondary-button:hover { color: #2778b8; background: #e8f4ff; }
 .danger-button { color: #b75c67; }
 .toast { color: #344a61; background: #fff; border-color: #e2ebf4; box-shadow: 0 12px 35px #23405d20; }
-.reaction-chip { color: #49627c; background: #f0f6fc; border-color: #dce8f3; }
-.reaction-chip span { color: #8393a6; }
-.reaction-chip.active { color: #347fbd; background: #e5f3ff; border-color: #9dcdf2; }
-.reaction-picker { background: #fff; border-color: #dfe9f3; box-shadow: 0 6px 18px #2b496518; }
-.reaction-picker button:hover { background: #eaf5ff; }
-
 .modal-backdrop { background: #29425d66; backdrop-filter: blur(7px); }
 .modal { color: #30445c; background: #fff; border-color: #e4ecf4; box-shadow: 0 24px 80px #17314f38; }
 .modal-heading h2, .modal h2 { color: #273d56; }

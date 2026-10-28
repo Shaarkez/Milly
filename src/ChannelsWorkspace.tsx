@@ -7,7 +7,6 @@ import { readableError } from './lib/supabase'
 type Space = { id: string; name: string; description: string; owner_id: string; role: 'owner' | 'member'; display_member_count_override: number | null }
 type SpaceChannel = { id: string; space_id: string; name: string; description: string; created_at: string }
 type ChannelMessage = { id: string; channel_id: string; sender_id: string; body: string; created_at: string }
-type Reaction = { id: number; channel_message_id: string; user_id: string; emoji: string }
 type Props = {
   client: SupabaseClient
   user: User
@@ -16,7 +15,6 @@ type Props = {
   onBack: () => void
 }
 
-const reactionChoices = ['👍', '❤️', '😂', '🔥', '😮', '😢']
 const formatTime = (value: string) => new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 
 function Avatar({ profile, size = 'normal' }: { profile?: Profile; size?: 'normal' | 'small' }) {
@@ -33,7 +31,6 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
   const [activeSpaceId, setActiveSpaceId] = useState('')
   const [activeChannelId, setActiveChannelId] = useState('')
   const [messages, setMessages] = useState<ChannelMessage[]>([])
-  const [reactions, setReactions] = useState<Reaction[]>([])
   const [draft, setDraft] = useState('')
   const [spaceName, setSpaceName] = useState('')
   const [channelName, setChannelName] = useState('')
@@ -124,23 +121,12 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
       for (const message of rows) merged.set(message.id, message)
       return [...merged.values()].sort((a, b) => a.created_at.localeCompare(b.created_at)).slice(-100)
     })
-    if (rows.length) {
-      const { data: reactionRows, error: reactionError } = await client
-        .from('message_reactions')
-        .select('id,channel_message_id,user_id,emoji')
-        .in('channel_message_id', rows.map((message) => message.id))
-      if (reactionError) throw reactionError
-      if (!cancelled()) setReactions(reactionRows ?? [])
-    } else if (initial && !cancelled()) {
-      setReactions([])
-    }
     if (initial && !cancelled()) requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
   }, [client])
 
   useEffect(() => {
     if (!activeChannel) {
       setMessages([])
-      setReactions([])
       return
     }
     let cancelled = false
@@ -159,14 +145,10 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
       }
     }
     setMessages([])
-    setReactions([])
     setLoadingMessages(true)
     void refresh(true)
     const channel = client.channel(`private-channel:${activeChannel.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'private_channel_messages', filter: `channel_id=eq.${activeChannel.id}` }, () => {
-        void refresh()
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => {
         void refresh()
       })
       .subscribe()
@@ -254,20 +236,6 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
     }
   }
 
-  async function toggleReaction(message: ChannelMessage, emoji: string) {
-    const existing = reactions.find((reaction) => reaction.channel_message_id === message.id && reaction.user_id === user.id && reaction.emoji === emoji)
-    setError('')
-    const result = existing
-      ? await client.from('message_reactions').delete().eq('id', existing.id)
-      : await client.from('message_reactions').insert({ channel_message_id: message.id, user_id: user.id, emoji }).select('id,channel_message_id,user_id,emoji').single()
-    if (result.error) {
-      setError(readableError(result.error))
-      return
-    }
-    if (existing) setReactions((current) => current.filter((reaction) => reaction.id !== existing.id))
-    else if (result.data) setReactions((current) => [...current, result.data as Reaction])
-  }
-
   const renderSpaceForm = showSpaceForm && <div className="channel-modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setShowSpaceForm(false) }}>
     <form className="channel-modal" onSubmit={(event) => void createSpace(event)}>
       <div className="channel-modal-heading"><div><span className="form-kicker">ЗАКРЫТОЕ ПРОСТРАНСТВО</span><h2>Создать пространство</h2></div><button type="button" className="icon-button" aria-label="Закрыть" onClick={() => setShowSpaceForm(false)}><X size={18} /></button></div>
@@ -310,16 +278,9 @@ export default function ChannelsWorkspace({ client, user, profile, friends, onBa
           {loadingMessages && <div className="channel-loading"><LoaderCircle className="spin" size={17} /> Загружаем сообщения</div>}
           {!messages.length && !loadingMessages ? <div className="channel-welcome"><div className="channel-welcome-icon"><Hash size={24} /></div><span>НАЧАЛО КАНАЛА</span><h2>Здесь начинается<br />общая история.</h2><p>Напишите первое сообщение в #{activeChannel.name}.</p></div> : messages.map((message) => {
             const author = profileById.get(message.sender_id)
-            const grouped = reactions.filter((reaction) => reaction.channel_message_id === message.id)
-            const groupedReactions = [...new Set(grouped.map((reaction) => reaction.emoji))].map((emoji) => ({
-              emoji,
-              count: grouped.filter((reaction) => reaction.emoji === emoji).length,
-              active: grouped.some((reaction) => reaction.emoji === emoji && reaction.user_id === user.id),
-            }))
             return <article className={`channel-message${message.sender_id === user.id ? ' own-message' : ''}`} key={message.id}>
               <Avatar profile={author} />
               <div className="channel-message-body"><header><strong>{author?.display_name ?? 'Участник'}{author?.is_verified && <BadgeCheck className="verified-mark" size={14} />}</strong><span>@{author?.username ?? 'member'}</span><time>{formatTime(message.created_at)}</time></header><p>{message.body}</p>
-                <div className="channel-reaction-row">{groupedReactions.map((reaction) => <button key={reaction.emoji} className={`reaction-chip${reaction.active ? ' active' : ''}`} aria-label={`${reaction.emoji} ${reaction.count}`} onClick={() => void toggleReaction(message, reaction.emoji)}>{reaction.emoji}<span>{reaction.count}</span></button>)}<div className="reaction-picker">{reactionChoices.map((emoji) => <button key={emoji} title={`Поставить реакцию ${emoji}`} aria-label={`Поставить реакцию ${emoji}`} onClick={() => void toggleReaction(message, emoji)}>{emoji}</button>)}</div></div>
               </div>
             </article>
           })}

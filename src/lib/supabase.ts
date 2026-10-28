@@ -1,10 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
+import { supabaseEnvironmentSchema } from './supabaseConfig'
 
-const environment = z.object({
-  VITE_SUPABASE_URL: z.string().url().optional(),
-  VITE_SUPABASE_ANON_KEY: z.string().min(1).optional(),
-}).safeParse(import.meta.env)
+const environment = supabaseEnvironmentSchema.safeParse(import.meta.env)
 
 export const isSupabaseConfigured = Boolean(
   environment.success && environment.data.VITE_SUPABASE_URL && environment.data.VITE_SUPABASE_ANON_KEY,

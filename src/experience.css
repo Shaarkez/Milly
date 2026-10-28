@@ -14,6 +14,19 @@ body {
   background: var(--bg);
 }
 
+.message-list {
+  gap: 1px;
+}
+
+.message-row.group-start,
+.message-row.mine.group-start {
+  margin-top: 8px;
+}
+
+.channel-messages-scroll {
+  gap: 7px;
+}
+
 .message-row {
   align-items: flex-start;
 }
@@ -414,77 +427,6 @@ body {
   border-color: #56343b;
 }
 
-.message-reactions,
-.channel-reaction-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-height: 23px;
-}
-
-.message-reactions {
-  position: relative;
-}
-
-.reaction-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 24px;
-  padding: 2px 7px;
-  color: #d8d9e6;
-  background: #252834;
-  border: 1px solid #393c4d;
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.reaction-chip span {
-  color: #a8aabd;
-  font-size: 10px;
-}
-
-.reaction-chip.active {
-  background: #383554;
-  border-color: #857bdf;
-}
-
-.reaction-picker {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  background: #1e202b;
-  border: 1px solid #373a49;
-  border-radius: 999px;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(3px);
-  transition: opacity 140ms ease, transform 140ms ease;
-}
-
-.message-content:hover .reaction-picker,
-.channel-message:hover .reaction-picker,
-.reaction-picker:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-.reaction-picker button {
-  display: grid;
-  width: 25px;
-  height: 25px;
-  place-items: center;
-  background: transparent;
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 13px;
-}
-
 .presence-warning {
   margin: -8px 18px 12px;
   padding: 8px 10px;
@@ -494,11 +436,6 @@ body {
   border-radius: 8px;
   font-size: 11px;
   line-height: 1.4;
-}
-
-.reaction-picker button:hover {
-  background: #383b4a;
-  transform: scale(1.12);
 }
 
 .sidebar-channel-hint {
@@ -1192,12 +1129,6 @@ body {
     padding: 0 10px 10px;
   }
 
-  .channel-reaction-row .reaction-picker {
-    opacity: 1;
-    pointer-events: auto;
-    transform: none;
-  }
-
   .profile-modal,
   .peer-profile-modal {
     padding: 16px;
@@ -1289,8 +1220,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .space-rail-button,
-  .space-rail-add,
-  .reaction-picker {
+  .space-rail-add {
     transition: none;
   }
 }

@@ -2,7 +2,7 @@ import { Fragment, lazy, Suspense, useEffect, useRef, useState, type FormEvent, 
 import type { Session } from '@supabase/supabase-js'
 import { ArrowLeft, AtSign, BadgeCheck, CalendarDays, Check, CheckCheck, CircleHelp, Copy, Hash, ImagePlus, LoaderCircle, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MoreHorizontal, Phone, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Users, Video, VideoOff, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react'
 import { isSupabaseConfigured, pageSize, readableError, supabase } from './lib/supabase'
-import type { CallSignal, Conversation, FriendRequest, Message, MessageReaction, Profile } from './lib/types'
+import type { CallSignal, Conversation, FriendRequest, Message, Profile } from './lib/types'
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
 
 type Dialog = 'friends' | 'profile' | 'peer' | null
@@ -13,7 +13,6 @@ const ChannelsWorkspace = lazy(() => import('./ChannelsWorkspace'))
 const AdminWorkspace = lazy(() => import('./AdminWorkspace'))
 const ADMIN_USER_ID = '6a3ecd6f-7f0a-424a-a02d-ef133f23003a'
 const colors = ['#6d8371', '#8b6a5f', '#687c91', '#927b4e', '#806d88']
-const reactionChoices = ['👍', '❤️', '😂', '🔥', '😮', '😢']
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
 const clock = (value: string) => new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 const displayDate = (value: string) => new Date(value).toDateString() === new Date().toDateString() ? clock(value) : new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short' }).format(new Date(value))
@@ -78,7 +77,6 @@ export default function Messenger() {
   const [requests, setRequests] = useState<FriendRequest[]>([])
   const [active, setActive] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
-  const [messageReactions, setMessageReactions] = useState<MessageReaction[]>([])
   const [hasOlder, setHasOlder] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [text, setText] = useState('')
@@ -139,7 +137,6 @@ export default function Messenger() {
   const friendsRef = useRef<Profile[]>([])
   const client = supabase
   const user = session?.user
-  const activeMessageIds = messages.map((message) => message.id)
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
   messagesRef.current = messages
 
@@ -545,45 +542,6 @@ export default function Messenger() {
   }, [client, user?.id, active?.id])
 
   useEffect(() => {
-    if (!client || !active) {
-      setMessageReactions([])
-      return
-    }
-    if (!activeMessageIds.length) {
-      setMessageReactions([])
-      return
-    }
-    let cancelled = false
-    let loading = false
-    const refresh = async () => {
-      if (cancelled || loading) return
-      loading = true
-      try {
-        const { data, error: failure } = await client
-          .from('message_reactions')
-          .select('id,message_id,channel_message_id,user_id,emoji')
-          .in('message_id', activeMessageIds)
-        if (failure) throw failure
-        if (!cancelled) setMessageReactions((data ?? []) as MessageReaction[])
-      } catch (caught) {
-        if (!cancelled) setError(readableError(caught))
-      } finally {
-        loading = false
-      }
-    }
-    void refresh()
-    const channel = client.channel(`message-reactions:${active.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => { void refresh() })
-      .subscribe()
-    const timer = window.setInterval(() => { void refresh() }, 5000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-      void client.removeChannel(channel)
-    }
-  }, [client, active?.id, activeMessageIds.join(',')])
-
-  useEffect(() => {
     if (!client || !user) return
     let cancelled = false
     let pollTimer: number | undefined
@@ -797,20 +755,6 @@ export default function Messenger() {
       requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
     } catch (caught) { setError(readableError(caught)) }
     finally { setSending(false) }
-  }
-
-  async function toggleMessageReaction(message: Message, emoji: string) {
-    if (!client || !user) return
-    const existing = messageReactions.find((reaction) => reaction.message_id === message.id && reaction.user_id === user.id && reaction.emoji === emoji)
-    const result = existing
-      ? await client.from('message_reactions').delete().eq('id', existing.id)
-      : await client.from('message_reactions').insert({ message_id: message.id, user_id: user.id, emoji }).select('id,message_id,channel_message_id,user_id,emoji').single()
-    if (result.error) {
-      setError(readableError(result.error))
-      return
-    }
-    if (existing) setMessageReactions((current) => current.filter((reaction) => reaction.id !== existing.id))
-    else if (result.data) setMessageReactions((current) => [...current, result.data as MessageReaction])
   }
 
   async function turnServers(): Promise<RTCIceServer[]> {
@@ -1105,11 +1049,7 @@ export default function Messenger() {
       const mine = message.sender_id === user?.id; const previous = messages[index - 1]
       const groupStart = !previous || previous.sender_id !== message.sender_id || new Date(message.created_at).getTime() - new Date(previous.created_at).getTime() > 300000
       const newDay = !previous || new Date(message.created_at).toDateString() !== new Date(previous.created_at).toDateString()
-      const groupedReactions = reactionChoices.filter((emoji) => messageReactions.some((reaction) => reaction.message_id === message.id && reaction.emoji === emoji)).map((emoji) => {
-        const matching = messageReactions.filter((reaction) => reaction.message_id === message.id && reaction.emoji === emoji)
-        return { emoji, count: matching.length, active: matching.some((reaction) => reaction.user_id === user?.id) }
-      })
-      return <Fragment key={message.id}>{newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}<div className={`message-row${mine ? ' mine' : ''}${groupStart ? ' group-start' : ''}`}>{!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} />}{!mine && !groupStart && <span className="avatar-spacer" />}<div className="message-content">{message.image_url && <button className="message-image" title="Открыть фотографию" onClick={() => window.open(message.image_url, '_blank', 'noopener,noreferrer')}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}{message.body && <div className="message-bubble">{message.body}</div>}<span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span><div className="message-reactions">{groupedReactions.map((reaction) => <button key={reaction.emoji} className={`reaction-chip${reaction.active ? ' active' : ''}`} aria-label={`${reaction.emoji} ${reaction.count}`} onClick={() => void toggleMessageReaction(message, reaction.emoji)}>{reaction.emoji}<span>{reaction.count}</span></button>)}<div className="reaction-picker">{reactionChoices.map((emoji) => <button key={emoji} title={`Поставить реакцию ${emoji}`} aria-label={`Поставить реакцию ${emoji}`} onClick={() => void toggleMessageReaction(message, emoji)}>{emoji}</button>)}</div></div></div></div></Fragment>
+      return <Fragment key={message.id}>{newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}<div className={`message-row${mine ? ' mine' : ''}${groupStart ? ' group-start' : ''}`}>{!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} />}{!mine && !groupStart && <span className="avatar-spacer" />}<div className="message-content">{message.image_url && <button className="message-image" title="Открыть фотографию" onClick={() => window.open(message.image_url, '_blank', 'noopener,noreferrer')}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}{message.body && <div className="message-bubble">{message.body}</div>}<span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span></div></div></Fragment>
     })}</div>}</div>
     <form className="composer" onSubmit={(event) => void sendMessage(event)}><input ref={fileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendMessage(undefined, file); event.target.value = '' }} /><button type="button" className="icon-button attach-button" title="Прикрепить фотографию" aria-label="Прикрепить фотографию" onClick={() => fileRef.current?.click()}><ImagePlus size={19} /></button><textarea ref={composerRef} value={text} onChange={(event) => { const textarea = event.currentTarget; setText(textarea.value); textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px` }} onKeyDown={composerKey} placeholder="Напишите сообщение…" rows={1} maxLength={4000} aria-label="Текст сообщения" /><button type="submit" className="send-button" disabled={sending || !text.trim()} aria-label="Отправить сообщение">{sending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></form>
   </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => setDialog('friends')}><Users size={16} /> Добавить друга</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>

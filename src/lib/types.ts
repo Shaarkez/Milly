@@ -22,14 +22,6 @@ export type Message = {
   image_url?: string
 }
 
-export type MessageReaction = {
-  id: number
-  message_id: string | null
-  channel_message_id: string | null
-  user_id: string
-  emoji: string
-}
-
 export type Conversation = {
   id: string
   user_low: string
