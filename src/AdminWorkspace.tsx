@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { createPortal } from 'react-dom'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { ArrowLeft, BadgeCheck, CalendarDays, LoaderCircle, Search, ShieldCheck, Users } from 'lucide-react'
 import { readableError } from './lib/supabase'
@@ -58,7 +59,7 @@ function formFrom(profile: AdminProfile): ProfileForm {
 }
 
 export default function AdminWorkspace({ client, onExit }: { client: SupabaseClient; onExit: () => void }) {
-  const [section, setSection] = useState<'accounts' | 'spaces'>('accounts')
+  const [section] = useState<'accounts' | 'spaces'>('accounts')
   const [query, setQuery] = useState('')
   const [profiles, setProfiles] = useState<AdminProfile[]>([])
   const [spaces, setSpaces] = useState<AdminSpace[]>([])
@@ -73,8 +74,13 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [sidebarElement, setSidebarElement] = useState<HTMLElement | null>(null)
   const selected = profiles.find((profile) => profile.id === selectedId)
   const normalizedQuery = useMemo(() => query.trim(), [query])
+
+  useEffect(() => {
+    setSidebarElement(document.querySelector<HTMLElement>('.messenger-shell > .sidebar'))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -242,24 +248,26 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
     }
   }
 
-  return <section className="admin-workspace">
+  return <>
+    {section === 'accounts' && sidebarElement && createPortal(<aside className="admin-account-list">
+      <div className="admin-sidebar-heading"><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><strong>Аккаунты</strong></div>
+      <label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Имя, @username или #ID" /></label>
+      <div className="admin-results">
+        {loading && <div className="admin-state"><LoaderCircle className="spin" size={18} /> Ищем аккаунты…</div>}
+        {!loading && !profiles.length && <div className="admin-state">Аккаунтов не найдено.</div>}
+        {profiles.map((person) => <button key={person.id} className={`admin-profile-row${person.id === selectedId ? ' selected' : ''}`} onClick={() => setSelectedId(person.id)}>
+          <span className="admin-avatar">{person.display_name.slice(0, 1).toUpperCase()}</span>
+          <span><strong>{person.display_name}{person.is_verified && <BadgeCheck size={13} />}</strong><small>#{person.user_number} · @{person.username}</small></span>
+        </button>)}
+      </div>
+    </aside>, sidebarElement)}
+  <section className="admin-workspace">
     <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-heading-actions"><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div><button type="button" className="secondary-button admin-exit" onClick={onExit}><ArrowLeft size={15} /> Выйти из панели</button></div></header>
-    <nav className="admin-tabs" aria-label="Разделы панели администратора">
-      <button className={section === 'accounts' ? 'selected' : ''} onClick={() => setSection('accounts')}><Users size={16} /> Аккаунты</button>
-    </nav>
+    {section === 'accounts' && <nav className="admin-tabs" aria-label="Разделы панели администратора">
+      <button className="selected" type="button"><Users size={16} /> Аккаунты</button>
+    </nav>}
     {error && section === 'accounts' && !selected && <p className="admin-error" role="alert">{error}</p>}
     {section === 'accounts' ? <div className="admin-account-layout">
-      <aside className="admin-account-list">
-        <label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Имя, @username или #ID" /></label>
-        <div className="admin-results">
-          {loading && <div className="admin-state"><LoaderCircle className="spin" size={18} /> Ищем аккаунты…</div>}
-          {!loading && !profiles.length && <div className="admin-state">Аккаунтов не найдено.</div>}
-          {profiles.map((person) => <button key={person.id} className={`admin-profile-row${person.id === selectedId ? ' selected' : ''}`} onClick={() => setSelectedId(person.id)}>
-            <span className="admin-avatar">{person.display_name.slice(0, 1).toUpperCase()}</span>
-            <span><strong>{person.display_name}{person.is_verified && <BadgeCheck size={13} />}</strong><small>#{person.user_number} · @{person.username}</small></span>
-          </button>)}
-        </div>
-      </aside>
       {selected && form ? <form className="admin-editor" onSubmit={(event) => void saveProfile(event)}>
         <div className="admin-editor-heading"><span className="admin-avatar admin-avatar-large">{selected.display_name.slice(0, 1).toUpperCase()}</span><div><h2>{selected.display_name}</h2><p>{selected.id}</p></div></div>
         <label>Отображаемое имя<input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} maxLength={40} required /></label>
@@ -302,7 +310,7 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
     </section>}
     {error && section === 'spaces' && <p className="admin-error" role="alert">{error}</p>}
     {notice && <p className="admin-notice" role="status">{notice}</p>}
-  </section>
+  </section></>
 }
 
 function HashIcon() {

@@ -100,14 +100,17 @@ export default function Messenger() {
   const [friendSearching, setFriendSearching] = useState(false)
   const [friendToRemove, setFriendToRemove] = useState<Profile | null>(null)
   const [messageToDelete, setMessageToDelete] = useState<Message | null>(null)
+  const [imageToView, setImageToView] = useState<{ url: string; alt: string } | null>(null)
   const [messageActions, setMessageActions] = useState<Message | null>(null)
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReaction[]>>({})
+  const [reactionBusy, setReactionBusy] = useState<Set<string>>(new Set())
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
   const [deletingMessage, setDeletingMessage] = useState(false)
   const [friendBusy, setFriendBusy] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileDraft, setProfileDraft] = useState({ displayName: '', username: '', bio: '' })
   const [notice, setNotice] = useState('')
+  const [copiedUsernameNotice, setCopiedUsernameNotice] = useState(false)
   const [error, setError] = useState('')
   const [online, setOnline] = useState<Set<string>>(new Set())
   const [presenceUnknown, setPresenceUnknown] = useState<Set<string>>(new Set())
@@ -202,6 +205,21 @@ export default function Messenger() {
       document.removeEventListener('keydown', closeEscape)
     }
   }, [messageActions?.id])
+
+  useEffect(() => {
+    if (!imageToView) return
+    const closeEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setImageToView(null)
+    }
+    document.addEventListener('keydown', closeEscape)
+    return () => document.removeEventListener('keydown', closeEscape)
+  }, [imageToView])
+
+  useEffect(() => {
+    if (!copiedUsernameNotice) return
+    const timer = window.setTimeout(() => setCopiedUsernameNotice(false), 2500)
+    return () => window.clearTimeout(timer)
+  }, [copiedUsernameNotice])
 
   useEffect(() => {
     const context = ringtoneContext.current
@@ -1149,19 +1167,39 @@ export default function Messenger() {
     setMessageReactions((current) => ({ ...current, [message.id]: data ?? [] }))
   }
 
-  async function toggleMessageReaction(emoji: string) {
-    if (!client || !user || !messageActions) return
-    const currentReactions = messageReactions[messageActions.id] ?? []
+  async function toggleReactionForMessage(messageId: string, emoji: string) {
+    const operationId = `${messageId}:${emoji}`
+    if (!client || !user || reactionBusy.has(operationId)) return
+    const currentReactions = messageReactions[messageId] ?? []
     const existing = currentReactions.find((reaction) => reaction.user_id === user.id && reaction.emoji === emoji)
-    const result = existing
-      ? await client.from('message_reactions').delete().eq('id', existing.id)
-      : await client.from('message_reactions').insert({ message_id: messageActions.id, user_id: user.id, emoji })
-    if (result.error) { setError(readableError(result.error)); return }
-    const { data, error: failure } = await client.from('message_reactions')
-      .select('id,user_id,message_id,emoji')
-      .eq('message_id', messageActions.id)
-    if (failure) { setError(readableError(failure)); return }
-    setMessageReactions((current) => ({ ...current, [messageActions.id]: data ?? [] }))
+    const nextReactions = existing
+      ? currentReactions.filter((reaction) => reaction.id !== existing.id)
+      : [...currentReactions, { id: -Date.now(), user_id: user.id, message_id: messageId, emoji }]
+    setMessageReactions((current) => ({ ...current, [messageId]: nextReactions }))
+    setReactionBusy((current) => new Set(current).add(operationId))
+    let mutationSucceeded = false
+    try {
+      const result = existing
+        ? await client.from('message_reactions').delete().eq('id', existing.id)
+        : await client.from('message_reactions').insert({ message_id: messageId, user_id: user.id, emoji })
+      if (result.error) throw result.error
+      mutationSucceeded = true
+      const { data, error: failure } = await client.from('message_reactions')
+        .select('id,user_id,message_id,emoji')
+        .eq('message_id', messageId)
+      if (failure) throw failure
+      setMessageReactions((current) => ({ ...current, [messageId]: data ?? [] }))
+    } catch (caught) {
+      if (!mutationSucceeded) setMessageReactions((current) => ({ ...current, [messageId]: currentReactions }))
+      setError(readableError(caught))
+    } finally {
+      setReactionBusy((current) => { const next = new Set(current); next.delete(operationId); return next })
+    }
+  }
+
+  async function toggleMessageReaction(emoji: string) {
+    if (!messageActions) return
+    await toggleReactionForMessage(messageActions.id, emoji)
   }
 
   async function copyMessage(message: Message) {
@@ -1560,6 +1598,14 @@ export default function Messenger() {
 
   async function copyId() { if (profile) { await navigator.clipboard.writeText(`#${profile.user_number}`); setNotice('ID скопирован.') } }
   async function copyUsername() { if (profile) { await navigator.clipboard.writeText(`@${profile.username}`); setNotice('Юзернейм скопирован.') } }
+  async function copyPeerUsername(username: string) {
+    try {
+      await navigator.clipboard.writeText(`@${username}`)
+      setCopiedUsernameNotice(true)
+    } catch (caught) {
+      setError(readableError(caught))
+    }
+  }
   function composerKey(event: KeyboardEvent<HTMLTextAreaElement>) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage() } }
 
   if (authLoading) return <div className="loading-screen"><span className="brand-mark"><MessageCircle size={17} /></span><LoaderCircle className="spin" size={19} /></div>
@@ -1577,7 +1623,7 @@ export default function Messenger() {
       : friends.some((friend) => friend.id === profileId)
         ? 'Не в сети'
         : 'Добавьте в контакты для статуса'
-  return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}`}><aside className="sidebar">
+  return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}${section === 'admin' ? ' admin-mode' : ''}`}><aside className="sidebar">
     <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти чаты и людей" aria-label="Найти чаты и людей" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button></div></div>
     {presenceUnknown.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
     <label className="search-box"><Search size={15} /><input placeholder="Поиск людей и чатов" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
@@ -1605,12 +1651,70 @@ export default function Messenger() {
       const newDay = !previous || new Date(message.created_at).toDateString() !== new Date(previous.created_at).toDateString()
       const reactions = messageReactions[message.id] ?? []
       const reactionCounts = [...new Set(reactions.map((reaction) => reaction.emoji))]
-      return <Fragment key={message.id}>{newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}<div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>{!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} />}{!mine && !groupStart && <span className="avatar-spacer" />}<div className="message-content">{message.image_url && <button className="message-image" title="Действия с фотографией" onMouseDown={(event) => void openMessageActions(message, event)}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}{message.body && <div className="message-bubble" onMouseDown={(event) => void openMessageActions(message, event)}>{message.body}</div>}{reactionCounts.length > 0 && <div className="message-reactions">{reactionCounts.map((emoji) => <span key={emoji}>{emoji} {reactions.filter((reaction) => reaction.emoji === emoji).length}</span>)}</div>}{messageActions?.id === message.id && <div className="message-actions-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}><div className="message-action-reactions">{MESSAGE_REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" title={`Реакция ${emoji}`} onClick={() => void toggleMessageReaction(emoji)}>{emoji}</button>)}</div>{message.image_url && <button type="button" role="menuitem" onClick={() => { window.open(message.image_url, '_blank', 'noopener,noreferrer'); setMessageActions(null) }}><ExternalLink size={16} /> Открыть фотографию</button>}<button type="button" role="menuitem" onClick={() => void copyMessage(message)} disabled={!message.body}><Copy size={16} /> Копировать</button>{mine && message.body && <button type="button" role="menuitem" onClick={() => editMessage(message)}><Pencil size={16} /> Изменить</button>}{mine && <button type="button" role="menuitem" className="message-action-delete" onClick={() => { setMessageActions(null); setMessageToDelete(message) }}><Trash2 size={16} /> Удалить</button>}</div>}{groupEnd && <span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span>}</div></div></Fragment>
+      return <Fragment key={message.id}>
+        {newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}
+        <div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>
+          {!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} />}
+          {!mine && !groupStart && <span className="avatar-spacer" />}
+          <div className="message-content">
+            {message.image_url && <button className="message-image" title="Открыть фотографию" onMouseDown={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}
+            {message.body && <div className="message-bubble" onMouseDown={(event) => void openMessageActions(message, event)}>{message.body}</div>}
+            {reactionCounts.length > 0 && <div className="message-reactions">{reactionCounts.map((emoji) => {
+              const reactionsForEmoji = reactions.filter((reaction) => reaction.emoji === emoji)
+              const ownReaction = reactionsForEmoji.some((reaction) => reaction.user_id === user?.id)
+              return <button key={emoji} type="button" className={`message-reaction${ownReaction ? ' own' : ''}`} aria-pressed={ownReaction} disabled={reactionBusy.has(`${message.id}:${emoji}`)} title={ownReaction ? 'Убрать свою реакцию' : 'Добавить свою реакцию'} onMouseDown={(event) => event.stopPropagation()} onClick={() => void toggleReactionForMessage(message.id, emoji)}>{emoji} {reactionsForEmoji.length}</button>
+            })}</div>}
+            {messageActions?.id === message.id && <div className="message-actions-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+              <div className="message-action-reactions">{MESSAGE_REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" disabled={reactionBusy.has(`${message.id}:${emoji}`)} title={`Реакция ${emoji}`} onClick={() => void toggleMessageReaction(emoji)}>{emoji}</button>)}</div>
+              {message.image_url && <button type="button" role="menuitem" onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><ExternalLink size={16} /> Открыть фотографию</button>}
+              <button type="button" role="menuitem" onClick={() => void copyMessage(message)} disabled={!message.body}><Copy size={16} /> Копировать</button>
+              {mine && message.body && <button type="button" role="menuitem" onClick={() => editMessage(message)}><Pencil size={16} /> Изменить</button>}
+              {mine && <button type="button" role="menuitem" className="message-action-delete" onClick={() => { setMessageActions(null); setMessageToDelete(message) }}><Trash2 size={16} /> Удалить</button>}
+            </div>}
+            {groupEnd && <span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span>}
+          </div>
+        </div>
+      </Fragment>
     })}</div>}</div>
     {editingMessage && <div className="editing-message-bar"><span>Изменение сообщения</span><button type="button" onClick={() => { setEditingMessage(null); setText('') }} aria-label="Отменить редактирование"><X size={15} /></button></div>}<form className="composer" onSubmit={(event) => void sendMessage(event)}><input ref={fileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendMessage(undefined, file); event.target.value = '' }} /><button type="button" className="icon-button attach-button" title="Прикрепить фотографию" aria-label="Прикрепить фотографию" onClick={() => fileRef.current?.click()}><ImagePlus size={19} /></button><textarea ref={composerRef} value={text} onChange={(event) => { const textarea = event.currentTarget; setText(textarea.value); textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px` }} onKeyDown={composerKey} placeholder={editingMessage ? 'Изменить сообщение…' : 'Напишите сообщение…'} rows={1} maxLength={4000} aria-label="Текст сообщения" /><button type="submit" className="send-button" disabled={sending || !text.trim()} aria-label={editingMessage ? 'Сохранить сообщение' : 'Отправить сообщение'}>{sending ? <LoaderCircle className="spin" size={17} /> : editingMessage ? <Check size={17} /> : <Send size={17} />}</button></form>
   </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={16} /> Найти человека</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>
 
-  {profilePanelOpen && profileToView && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя"><header className="profile-sidebar-header"><button className="icon-button profile-sidebar-back" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><ArrowLeft size={17} /></button><strong>Профиль</strong><button className="icon-button" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><X size={17} /></button></header><div className="profile-sidebar-content"><div className="profile-sidebar-hero"><Avatar name={profileToView.display_name} large image={profileToView.avatar_url} onImageError={profileToView.avatar_path ? () => void refreshAvatar(profileToView.avatar_path!) : undefined} /><strong>{profileToView.display_name}{profileToView.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={11} strokeWidth={3} /></span>}</strong><span>@{profileToView.username}</span><small className={online.has(profileToView.id) ? 'profile-status online' : 'profile-status'}><i />{presenceLabel(profileToView.id)}</small>{profileToView.bio && <p className="profile-bio">{profileToView.bio}</p>}</div><div className="profile-info-list"><div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Username</small><strong>@{profileToView.username}</strong></span></div><div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div><div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div><div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>{Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><strong>{profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</strong></span></div>}</div><div className="profile-sidebar-actions"><button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button>{friends.some((friend) => friend.id === profileToView.id) ? <button className="primary-button danger-button" disabled={friendBusy} onClick={() => { setProfilePanelOpen(false); setFriendToRemove(profileToView) }}><Users size={15} /> Удалить из контактов</button> : outgoingRequestIds.has(profileToView.id) ? <button className="secondary-button" disabled><Users size={15} /> Запрос отправлен</button> : requests.some((request) => request.sender_id === profileToView.id) ? <button className="secondary-button" disabled><Users size={15} /> Запрос получен · смотрите входящие</button> : <button className="secondary-button" disabled={friendBusy} onClick={() => void addFriend(profileToView)}><Users size={15} /> Добавить в контакты</button>}</div></div></aside>}
+  {profilePanelOpen && profileToView && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя">
+    <header className="profile-sidebar-header"><button className="icon-button profile-sidebar-back" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><ArrowLeft size={17} /></button><strong>Профиль</strong><button className="icon-button" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><X size={17} /></button></header>
+    <div className="profile-sidebar-content">
+      <div className="profile-sidebar-hero">
+        <Avatar name={profileToView.display_name} large image={profileToView.avatar_url} onImageError={profileToView.avatar_path ? () => void refreshAvatar(profileToView.avatar_path!) : undefined} />
+        <strong>{profileToView.display_name}{profileToView.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={11} strokeWidth={3} /></span>}</strong>
+        <button type="button" className="profile-username-copy" onClick={() => void copyPeerUsername(profileToView.username)} aria-label={`Скопировать username @${profileToView.username}`}>@{profileToView.username}</button>
+        <small className={online.has(profileToView.id) ? 'profile-status online' : 'profile-status'}><i />{presenceLabel(profileToView.id)}</small>
+        {profileToView.bio && <p className="profile-bio">{profileToView.bio}</p>}
+      </div>
+      <div className="profile-info-list">
+        <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Username</small><button type="button" className="profile-username-copy info-copy" onClick={() => void copyPeerUsername(profileToView.username)}>@{profileToView.username}</button></span></div>
+        <div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div>
+        <div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div>
+        <div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>
+        {Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><strong>{profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</strong></span></div>}
+      </div>
+      <div className="profile-sidebar-actions">
+        <button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button>
+        {friends.some((friend) => friend.id === profileToView.id)
+          ? <button className="primary-button danger-button" disabled={friendBusy} onClick={() => { setProfilePanelOpen(false); setFriendToRemove(profileToView) }}><Users size={15} /> Удалить из контактов</button>
+          : outgoingRequestIds.has(profileToView.id)
+            ? <button className="secondary-button" disabled><Users size={15} /> Запрос отправлен</button>
+            : requests.some((request) => request.sender_id === profileToView.id)
+              ? <button className="secondary-button" disabled><Users size={15} /> Запрос получен · смотрите входящие</button>
+              : <button className="secondary-button" disabled={friendBusy} onClick={() => void addFriend(profileToView)}><Users size={15} /> Добавить в контакты</button>}
+      </div>
+    </div>
+  </aside>}
+  {copiedUsernameNotice && <div className="clipboard-toast" role="status"><Check size={17} /> Юзернейм скопирован</div>}
+  {imageToView && <div className="image-viewer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setImageToView(null) }}>
+    <section className="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фотографии">
+      <button type="button" className="image-viewer-close" aria-label="Закрыть фотографию" onClick={() => setImageToView(null)}><X size={19} /></button>
+      <img src={imageToView.url} alt={imageToView.alt} />
+    </section>
+  </div>}
   {(error || notice) && user?.id === ADMIN_USER_ID && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
   {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>@{profile.username}</span>{profile.bio && <small className="profile-bio">{profile.bio}</small>}{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div><form className="profile-edit" onSubmit={(event) => void saveName(event)}><div className="profile-section-title">Редактор профиля</div><div className="profile-editor-preview"><Avatar name={profileDraft.displayName || profile.display_name} image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profileDraft.displayName || profile.display_name}</strong><small>@{profileDraft.username || profile.username}</small></span></div><label>Имя<input name="display_name" value={profileDraft.displayName} onChange={(event) => setProfileDraft((draft) => ({ ...draft, displayName: event.target.value }))} maxLength={40} required /></label><label>Username<input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></label><label>Описание профиля<textarea name="bio" value={profileDraft.bio} onChange={(event) => setProfileDraft((draft) => ({ ...draft, bio: event.target.value }))} maxLength={160} rows={3} placeholder="Пара слов о себе" /></label><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ displayName: profile.display_name, username: profile.username, bio: profile.bio ?? '' }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
   {friendToRemove && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !friendBusy) setFriendToRemove(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="remove-friend-title">Удалить из друзей?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={friendBusy} onClick={() => setFriendToRemove(null)}><X size={18} /></button></div><p>{friendToRemove.display_name} исчезнет из списка друзей. История переписки останется.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={friendBusy} onClick={() => setFriendToRemove(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={friendBusy} onClick={() => void removeFriend(friendToRemove)}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : null}Удалить из друзей</button></div></section></div>}
