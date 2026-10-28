@@ -58,6 +58,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .older-button { color: #397eb4; background: #edf6ff; border-color: #d8eafb; }
 .message-bubble { color: #33475e; background: #fff; border-color: #e2eaf2; box-shadow: 0 3px 12px #334c6609; }
 .mine .message-bubble { color: #123b60; background: #dcefff; border-color: #c8e4fb; }
+.message-delete-button { color: #73869a; background: #fff; border-color: #dce7f1; box-shadow: 0 3px 9px #29496714; }
+.message-delete-button:hover { color: #fff; background: #ba626a; border-color: #ba626a; }
 .message-meta { color: #8c9aad; }
 .mine .message-meta svg { color: #4a9bd9; }
 .message-day-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 7px; color: #8b9aad; font-size: 10px; }
@@ -229,6 +231,8 @@ body.milly-dark .chat-person strong, body.milly-dark .chat-begin h2, body.milly-
 body.milly-dark .chat-person span, body.milly-dark .chat-begin p, body.milly-dark .profile-info-list small, body.milly-dark .modal p { color: #a0adbb; }
 body.milly-dark .message-bubble { color: #dce5ee; background: #293139; border-color: #37424d; }
 body.milly-dark .mine .message-bubble { color: #e4f2ff; background: #2b4962; border-color: #3a5b75; }
+body.milly-dark .message-delete-button { color: #a7b3be; background: #293139; border-color: #3c4852; }
+body.milly-dark .message-delete-button:hover { color: #fff; background: #a8515b; border-color: #a8515b; }
 body.milly-dark .message-day-divider { color: #a0adbb; }
 body.milly-dark .message-day-divider::before, body.milly-dark .message-day-divider::after { background: #35404b; }
 body.milly-dark .composer textarea { color: #dce5ed; }

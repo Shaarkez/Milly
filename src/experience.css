@@ -37,6 +37,42 @@ body {
   line-height: 1.45;
 }
 
+.message-content {
+  position: relative;
+}
+
+.message-delete-button {
+  position: absolute;
+  top: -5px;
+  right: -35px;
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  color: #a7adbd;
+  background: #252834;
+  border: 1px solid #3b3f4e;
+  border-radius: 8px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .16s, color .16s, background .16s;
+}
+
+.message-row.mine .message-delete-button {
+  right: auto;
+  left: -35px;
+}
+
+.message-row:hover .message-delete-button,
+.message-delete-button:focus-visible {
+  opacity: 1;
+}
+
+.message-delete-button:hover {
+  color: #fff;
+  background: #854e4a;
+}
+
 .message-row.group-single .message-bubble {
   border-radius: 16px 16px 16px 4px;
 }
@@ -67,6 +103,12 @@ body {
 
 .message-row.mine.group-end .message-bubble {
   border-radius: 16px 16px 2px 16px;
+}
+
+@media (hover: none) {
+  .message-delete-button {
+    opacity: .8;
+  }
 }
 
 main .call-overlay:not(.call-overlay-modal) {
