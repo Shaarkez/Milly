@@ -65,6 +65,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .message-delete-button:hover { color: #fff; background: #ba626a; border-color: #ba626a; }
 .message-meta { color: #8c9aad; }
 .mine .message-meta svg { color: #4a9bd9; }
+.message-row>.avatar, .message-row>.avatar-spacer { flex: 0 0 38px; width: 38px; }
 .message-day-divider { display: flex; align-items: center; justify-content: center; margin: 19px 0 9px; color: #7d8794; font-size: 12px; }
 .message-day-divider::before, .message-day-divider::after { display: none; }
 .message-day-divider>span { padding: 6px 17px; background: #fff; border: 1px solid #e3eaf1; border-radius: 999px; box-shadow: 0 2px 6px #2949670a; font-weight: 600; line-height: 1.2; }

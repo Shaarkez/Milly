@@ -104,6 +104,8 @@ export default function Messenger() {
   const [error, setError] = useState('')
   const [online, setOnline] = useState<Set<string>>(new Set())
   const [presenceUnknown, setPresenceUnknown] = useState<Set<string>>(new Set())
+  const [presenceFallback, setPresenceFallback] = useState(false)
+  const [presenceFallbackFriends, setPresenceFallbackFriends] = useState<Set<string>>(new Set())
   const [sending, setSending] = useState(false)
   const [callPhase, setCallPhase] = useState<CallPhase>('idle')
   const [callMinimized, setCallMinimized] = useState(false)
@@ -389,23 +391,48 @@ export default function Messenger() {
     }
     const avatarRefresh = window.setInterval(() => { void refreshAccount(true) }, 45 * 60 * 1000)
     void refreshAccount()
-    const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => {
+    let presenceJoined = false
+    const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status, failure) => {
+      if (cancelled) return
       if (status === 'SUBSCRIBED') {
+        presenceJoined = true
+        setPresenceFallback(false)
         try {
           const result = await presence.track({ online_at: new Date().toISOString() })
           if (!cancelled) {
-            if (result !== 'ok') setNotice('Realtime присутствия подключён, но публикация онлайн-статуса не удалась.')
+            if (result !== 'ok') {
+              setPresenceFallback(true)
+              setNotice(`Realtime присутствия подключён, но публикация онлайн-статуса не удалась: ${result}`)
+            }
             else setNotice((current) => current.startsWith('Realtime присутствия') || current.startsWith('Не удалось опубликовать онлайн-статус') ? '' : current)
           }
         } catch (caught) {
-          if (!cancelled) setNotice(`Не удалось опубликовать онлайн-статус: ${readableError(caught)}`)
+          if (!cancelled) {
+            setPresenceFallback(true)
+            setNotice(`Не удалось опубликовать онлайн-статус: ${readableError(caught)}`)
+          }
         }
         return
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        if (!cancelled) setNotice('Realtime присутствия недоступен; онлайн-статусы могут временно не обновляться.')
+        presenceJoined = false
+        setPresenceFallback(true)
+        const reason = failure instanceof Error ? ` Причина: ${failure.message}` : ''
+        setNotice(`Realtime присутствия недоступен; работает резервный онлайн-статус.${reason}`)
       }
     })
+    const refreshPresence = () => {
+      if (!cancelled && presenceJoined && document.visibilityState === 'visible') {
+        void presence.track({ online_at: new Date().toISOString() }).catch((caught: unknown) => {
+          if (!cancelled) {
+            setPresenceFallback(true)
+            setNotice(`Не удалось обновить онлайн-статус: ${readableError(caught)}`)
+          }
+        })
+      }
+    }
+    window.addEventListener('online', refreshPresence)
+    document.addEventListener('visibilitychange', refreshPresence)
     const accountChannel = client.channel(`account:${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
@@ -458,6 +485,8 @@ export default function Messenger() {
       cancelled = true
       stopAccountFallback()
       window.clearInterval(avatarRefresh)
+      window.removeEventListener('online', refreshPresence)
+      document.removeEventListener('visibilitychange', refreshPresence)
       void client.removeChannel(presence)
       void client.removeChannel(accountChannel)
     }
@@ -482,14 +511,25 @@ export default function Messenger() {
             next.delete(friend.id)
             return next
           })
-        }).subscribe((status) => {
-          if (cancelled || (status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT' && status !== 'CLOSED')) return
+        }).subscribe((status, failure) => {
+          if (cancelled) return
+          if (status === 'SUBSCRIBED') {
+            setPresenceFallbackFriends((current) => {
+              const next = new Set(current)
+              next.delete(friend.id)
+              return next
+            })
+            return
+          }
+          if (status !== 'CHANNEL_ERROR' && status !== 'TIMED_OUT' && status !== 'CLOSED') return
+          if (failure) console.warn(`Realtime presence failed for friend ${friend.id}:`, failure)
           setOnline((current) => {
             const next = new Set(current)
             next.delete(friend.id)
             return next
           })
           setPresenceUnknown((current) => new Set(current).add(friend.id))
+          setPresenceFallbackFriends((current) => new Set(current).add(friend.id))
         })
       return channel
     })
@@ -506,8 +546,95 @@ export default function Messenger() {
         for (const friend of friends) next.delete(friend.id)
         return next
       })
+      setPresenceFallbackFriends((current) => {
+        const next = new Set(current)
+        for (const friend of friends) next.delete(friend.id)
+        return next
+      })
     }
   }, [client, user?.id, friendIdsKey])
+
+  const presenceFallbackFriendIds = friends
+    .map((friend) => friend.id)
+    .filter((friendId) => presenceFallbackFriends.has(friendId))
+    .sort()
+  const presenceFallbackFriendIdsKey = presenceFallbackFriendIds.join(',')
+
+  useEffect(() => {
+    if (!client || !user || !presenceFallback) return
+    let cancelled = false
+    let updating = false
+    const updateLastSeen = async () => {
+      if (cancelled || updating || document.visibilityState !== 'visible') return
+      updating = true
+      try {
+        const { error: failure } = await client.from('profiles')
+          .update({ last_seen_at: new Date().toISOString() })
+          .eq('id', user.id)
+        if (failure) throw failure
+        if (!cancelled) setNotice((current) => current.startsWith('Резервный онлайн-статус недоступен') ? '' : current)
+      } catch (caught) {
+        if (!cancelled) setNotice((current) => current.startsWith('Резервный онлайн-статус недоступен')
+          ? current
+          : `Резервный онлайн-статус недоступен: ${readableError(caught)}`)
+      } finally {
+        updating = false
+      }
+    }
+    const heartbeat = window.setInterval(() => { void updateLastSeen() }, 25_000)
+    document.addEventListener('visibilitychange', updateLastSeen)
+    void updateLastSeen()
+    return () => {
+      cancelled = true
+      window.clearInterval(heartbeat)
+      document.removeEventListener('visibilitychange', updateLastSeen)
+    }
+  }, [client, user?.id, presenceFallback])
+
+  useEffect(() => {
+    if (!client || !presenceFallbackFriendIds.length) return
+    let cancelled = false
+    let refreshing = false
+    const refreshFallbackPresence = async () => {
+      if (cancelled || refreshing || document.visibilityState !== 'visible') return
+      refreshing = true
+      try {
+        const { data, error: failure } = await client.from('profiles')
+          .select('id,last_seen_at')
+          .in('id', presenceFallbackFriendIds)
+        if (failure) throw failure
+        if (cancelled) return
+        const lastSeenById = new Map((data ?? []).map((row) => [row.id, row.last_seen_at]))
+        const onlineCutoff = Date.now() - 70_000
+        setOnline((current) => {
+          const next = new Set(current)
+          for (const friendId of presenceFallbackFriendIds) {
+            const lastSeen = lastSeenById.get(friendId)
+            if (lastSeen && Date.parse(lastSeen) >= onlineCutoff) next.add(friendId)
+            else next.delete(friendId)
+          }
+          return next
+        })
+        setPresenceUnknown((current) => {
+          const next = new Set(current)
+          for (const friendId of presenceFallbackFriendIds) next.delete(friendId)
+          return next
+        })
+      } catch (caught) {
+        if (!cancelled) console.warn('Fallback friend presence lookup failed:', caught)
+      } finally {
+        refreshing = false
+      }
+    }
+    const polling = window.setInterval(() => { void refreshFallbackPresence() }, 15_000)
+    document.addEventListener('visibilitychange', refreshFallbackPresence)
+    void refreshFallbackPresence()
+    return () => {
+      cancelled = true
+      window.clearInterval(polling)
+      document.removeEventListener('visibilitychange', refreshFallbackPresence)
+    }
+  }, [client, presenceFallbackFriendIdsKey])
 
   useEffect(() => {
     const lookup = search.trim()
