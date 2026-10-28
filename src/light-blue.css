@@ -164,14 +164,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-control.menu-open { background: #edf6ff; }
 .account-menu-anchor { position: relative; }
 .account-menu { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 8px); left: 0; display: flex; flex-direction: column; min-width: 230px; padding: 8px; background: #fff; border: 1px solid #e1eaf3; border-radius: 11px; box-shadow: 0 14px 42px #233f5c25; animation: admin-enter .16s ease-out both; }
-.account-menu-heading { display: flex; align-items: center; gap: 9px; padding: 8px 7px 11px; border-bottom: 1px solid #edf1f6; }
+.account-menu-heading { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; padding: 8px 7px 11px; border-bottom: 1px solid #edf1f6; }
 .account-menu-heading>span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .account-menu-heading strong { color: #30455d; font-size: 11px; }
 .account-menu-heading small { color: #8392a5; font-size: 10px; }
 .account-menu>button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 9px; color: #536981; text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; font-size: 12px; }
+.account-menu>button:first-of-type { margin-top: 3px; }
 .account-menu>button:hover { color: #347fbd; background: #f0f7fd; }
 .account-menu>button svg { color: #6b91b2; }
-.account-menu>button.account-menu-signout { margin-top: 5px; padding-top: 6px; color: #536981; border-top: 1px solid #edf1f6; border-radius: 0 0 7px 7px; }
+.account-menu>button.account-menu-signout { margin-top: 8px; padding-top: 0; color: #536981; border-top: 1px solid #edf1f6; border-radius: 7px; }
 .chat-avatar-button { display: grid; flex: none; padding: 0; place-items: center; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
 .chat-person-button { min-width: 0; padding: 0; text-align: left; background: transparent; border: 0; cursor: pointer; }
 .header-actions .video-call-button { color: #568fbe; }
@@ -186,9 +187,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-hero>strong { display: flex; align-items: center; color: #2e435b; font-size: 17px; font-weight: 700; }
 .profile-sidebar-hero>.profile-username-copy { margin-top: 6px; font-size: 14px; }
 .profile-username-copy { padding: 0; color: #398dd1; text-align: left; background: transparent; border: 0; cursor: pointer; font: inherit; }
-.profile-username-copy:hover { color: #2478bd; text-decoration: underline; text-underline-offset: 3px; }
+.profile-username-copy:hover { color: #2478bd; text-decoration: none; }
 .profile-username-copy:focus-visible { outline: 2px solid #78b9ed; outline-offset: 3px; border-radius: 3px; }
-.profile-username-copy.info-copy { color: #3e81b6; font-size: 14px; font-weight: 600; }
+.profile-username-copy.info-copy { color: #3e81b6; font-size: 12px; font-weight: 600; }
+.modal[role="alertdialog"] .form-kicker { color: #4a91ca; }
 .profile-sidebar-hero .profile-status { display: flex; align-items: center; gap: 7px; margin-top: 5px; color: #8392a5; font-size: 12px; }
 .profile-status i { width: 7px; height: 7px; background: #a5b0bc; border-radius: 50%; }
 .profile-status.online { color: #42996e; }
@@ -380,6 +382,7 @@ body.milly-dark .message-action-reactions { border-color: #36414c; }
 body.milly-dark .message-reaction { color: #c5d5e3; background: #26323d; border-color: #3a4855; }
 body.milly-dark .message-reaction.own { color: #9cccf0; background: #263d50; border-color: #4a789c; }
 body.milly-dark .profile-username-copy.info-copy { color: #9cccf0; }
+body.milly-dark .modal[role="alertdialog"] .form-kicker { color: #9cccf0; }
 body.milly-dark .editing-message-bar { color: #9cccf0; background: #263746; }
 
 @keyframes profile-enter { from { opacity: 0; transform: translateX(7px); } to { opacity: 1; transform: translateX(0); } }
