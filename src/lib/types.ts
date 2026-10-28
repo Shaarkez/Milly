@@ -26,6 +26,8 @@ export type Message = {
 export type Group = {
   id: string
   name: string
+  public_username?: string | null
+  is_verified?: boolean
   avatar_path: string | null
   avatar_url?: string
   created_by: string

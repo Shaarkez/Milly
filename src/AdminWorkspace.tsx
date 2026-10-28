@@ -33,6 +33,16 @@ type AdminChannel = {
   description: string
 }
 
+type AdminGroup = {
+  id: string
+  name: string
+  public_username: string | null
+  is_verified: boolean
+  created_by: string
+  created_at: string
+  member_count: number
+}
+
 type ProfileForm = {
   displayName: string
   username: string
@@ -59,11 +69,12 @@ function formFrom(profile: AdminProfile): ProfileForm {
 }
 
 export default function AdminWorkspace({ client, onExit }: { client: SupabaseClient; onExit: () => void }) {
-  const [section] = useState<'accounts' | 'spaces'>('accounts')
+  const [section, setSection] = useState<'accounts' | 'groups' | 'spaces'>('accounts')
   const [query, setQuery] = useState('')
   const [profiles, setProfiles] = useState<AdminProfile[]>([])
   const [spaces, setSpaces] = useState<AdminSpace[]>([])
   const [channels, setChannels] = useState<AdminChannel[]>([])
+  const [groups, setGroups] = useState<AdminGroup[]>([])
   const [selectedId, setSelectedId] = useState('')
   const [form, setForm] = useState<ProfileForm | null>(null)
   const [countDrafts, setCountDrafts] = useState<Record<string, string>>({})
@@ -71,6 +82,7 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
   const [channelDrafts, setChannelDrafts] = useState<Record<string, { name: string; description: string }>>({})
   const [loading, setLoading] = useState(true)
   const [spacesLoading, setSpacesLoading] = useState(true)
+  const [groupsLoading, setGroupsLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -248,6 +260,42 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
     }
   }
 
+  async function setGroupVerification(group: AdminGroup, verified: boolean) {
+    if (saving) return
+    setSaving(true); setError(''); setNotice('')
+    try {
+      const { error: failure } = await client.rpc('admin_set_group_verified', {
+        p_group_id: group.id,
+        p_is_verified: verified,
+      })
+      if (failure) throw failure
+      setGroups((current) => current.map((row) => row.id === group.id ? { ...row, is_verified: verified } : row))
+      setNotice(`Галочка для группы «${group.name}» ${verified ? 'выдана' : 'снята'}.`)
+    } catch (caught) {
+      setError(readableError(caught))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    const loadGroups = async () => {
+      setGroupsLoading(true)
+      try {
+        const { data, error: failure } = await client.rpc('admin_list_groups')
+        if (failure) throw failure
+        if (!cancelled) setGroups((data ?? []) as AdminGroup[])
+      } catch (caught) {
+        if (!cancelled) setError(readableError(caught))
+      } finally {
+        if (!cancelled) setGroupsLoading(false)
+      }
+    }
+    void loadGroups()
+    return () => { cancelled = true }
+  }, [client])
+
   return <>
     {section === 'accounts' && sidebarElement && createPortal(<aside className="admin-account-list">
       <div className="admin-sidebar-heading"><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><strong>Аккаунты</strong></div>
@@ -263,10 +311,12 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
     </aside>, sidebarElement)}
   <section className="admin-workspace">
     <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-heading-actions"><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div><button type="button" className="secondary-button admin-exit" onClick={onExit}><ArrowLeft size={15} /> Выйти из панели</button></div></header>
-    {section === 'accounts' && <nav className="admin-tabs" aria-label="Разделы панели администратора">
-      <button className="selected" type="button"><Users size={16} /> Аккаунты</button>
-    </nav>}
-    {error && section === 'accounts' && !selected && <p className="admin-error" role="alert">{error}</p>}
+    <nav className="admin-tabs" aria-label="Разделы панели администратора">
+      <button className={section === 'accounts' ? 'selected' : ''} type="button" onClick={() => setSection('accounts')}><Users size={16} /> Аккаунты</button>
+      <button className={section === 'groups' ? 'selected' : ''} type="button" onClick={() => setSection('groups')}><Users size={16} /> Группы</button>
+      <button className={section === 'spaces' ? 'selected' : ''} type="button" onClick={() => setSection('spaces')}><ShieldCheck size={16} /> Пространства</button>
+    </nav>
+    {error && !selected && <p className="admin-error" role="alert">{error}</p>}
     {section === 'accounts' ? <div className="admin-account-layout">
       {selected && form ? <form className="admin-editor" onSubmit={(event) => void saveProfile(event)}>
         <div className="admin-editor-heading"><span className="admin-avatar admin-avatar-large">{selected.display_name.slice(0, 1).toUpperCase()}</span><div><h2>{selected.display_name}</h2><p>{selected.id}</p></div></div>
@@ -282,7 +332,15 @@ export default function AdminWorkspace({ client, onExit }: { client: SupabaseCli
         {error && <p className="admin-error" role="alert">{error}</p>}
         <button className="primary-button admin-save" disabled={saving}>{saving ? <LoaderCircle className="spin" size={16} /> : null} Сохранить изменения</button>
       </form> : <div className="admin-empty">Выберите аккаунт слева, чтобы открыть редактор.</div>}
-    </div> : <section className="admin-channels">
+    </div> : section === 'groups' ? <section className="admin-channels admin-groups">
+      <div className="admin-section-intro"><h2>Групповые чаты</h2><p>Выдавайте и снимайте подтверждение группы. Доступ к управлению проверяется в Supabase.</p></div>
+      {groupsLoading ? <div className="admin-state"><LoaderCircle className="spin" size={18} /> Загружаем группы…</div> : groups.length ? groups.map((group) => <article key={group.id} className="admin-space-card admin-group-card">
+        <div className="admin-space-card-heading"><div className="admin-space-icon"><Users size={17} /></div><div className="admin-space-copy"><strong>{group.name}{group.is_verified && <BadgeCheck size={14} />}</strong><span>{group.public_username ? `@${group.public_username} · ` : ''}{group.member_count} участников · создана {formatDate(group.created_at)}</span></div></div>
+        <label className="admin-check-field"><input type="checkbox" checked={group.is_verified} disabled={saving} onChange={(event) => void setGroupVerification(group, event.target.checked)} /><span><strong>Подтверждённая группа</strong><small>Показывать синюю отметку рядом с названием</small></span><BadgeCheck size={19} /></label>
+      </article>) : <div className="admin-state">Групп пока нет.</div>}
+      {error && <p className="admin-error" role="alert">{error}</p>}
+      {notice && <p className="admin-notice" role="status">{notice}</p>}
+    </section> : <section className="admin-channels">
       <div className="admin-section-intro"><h2>Пространства и текстовые каналы</h2><p>Названия и описания редактируются в базе. Фактический состав участников не меняется.</p></div>
       {spacesLoading ? <div className="admin-state"><LoaderCircle className="spin" size={18} /> Загружаем пространства и каналы…</div> : spaces.length ? spaces.map((space) => <article key={space.id} className="admin-space-card">
         <div className="admin-space-card-heading"><div className="admin-space-icon"><HashIcon /></div><div className="admin-space-copy"><strong>{space.name}</strong><span>Фактических участников: {space.actual_member_count}</span></div></div>

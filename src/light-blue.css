@@ -183,11 +183,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-hero::before { position: absolute; z-index: -1; top: 0; right: -20px; left: -20px; height: 126px; background: linear-gradient(145deg, #5ca9df, #347eaf); content: ''; }
 .profile-sidebar-hero .avatar { z-index: 0; flex-basis: 100px; width: 100px; height: 100px; margin-bottom: 12px; border: 0; box-shadow: none; }
 .profile-sidebar-hero>strong { display: flex; align-items: center; color: #2e435b; font-size: 17px; font-weight: 700; }
-.profile-sidebar-hero>.profile-username-copy { margin-top: 6px; font-size: 11px; }
+.profile-sidebar-hero>.profile-username-copy { margin-top: 6px; font-size: 14px; }
 .profile-username-copy { padding: 0; color: #398dd1; text-align: left; background: transparent; border: 0; cursor: pointer; font: inherit; }
 .profile-username-copy:hover { color: #2478bd; text-decoration: underline; text-underline-offset: 3px; }
 .profile-username-copy:focus-visible { outline: 2px solid #78b9ed; outline-offset: 3px; border-radius: 3px; }
-.profile-username-copy.info-copy { color: #3e81b6; font-size: 12px; font-weight: 600; }
+.profile-username-copy.info-copy { color: #3e81b6; font-size: 14px; font-weight: 600; }
 .profile-sidebar-hero .profile-status { display: flex; align-items: center; gap: 7px; margin-top: 5px; color: #8392a5; font-size: 12px; }
 .profile-status i { width: 7px; height: 7px; background: #a5b0bc; border-radius: 50%; }
 .profile-status.online { color: #42996e; }
@@ -199,13 +199,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-info-list small { color: #8b9aad; font-size: 11px; }
 .profile-info-list strong { overflow-wrap: anywhere; color: #3e556e; font-size: 12px; font-weight: 600; }
 .profile-alias-list { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.profile-alias-list .profile-alias-copy { font-size: 11px; }
 .profile-alias-copy { padding: 0; color: #398dd1; text-align: left; background: transparent; border: 0; cursor: pointer; font: inherit; }
 .profile-alias-copy:hover { color: #2478bd; text-decoration: underline; text-underline-offset: 2px; }
 .profile-sidebar-actions { display: grid; gap: 9px; margin-top: auto; padding-top: 18px; }
 .profile-sidebar-actions button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; border-radius: 9px; font-size: 13px; }
 .profile-sidebar-actions .danger-button { color: #b75c67; background: #fff3f4; border-color: #f3dfe1; }
-.profile-sidebar-actions .primary-button.danger-button { color: #fff; background: #d77883; border: 1px solid #d77883; box-shadow: none; }
-.profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #c96572; border-color: #c96572; transform: none; }
+.profile-sidebar-actions .primary-button.danger-button { color: #fff; background: #d45d69; border: 1px solid #d45d69; box-shadow: none; }
+.profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #bf4653; border-color: #bf4653; transform: none; }
+.primary-button.danger-button { color: #fff; background: #d45d69; border-color: #d45d69; box-shadow: none; }
+.primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #bf4653; border-color: #bf4653; }
 .verified-badge { display: inline-grid; flex: none; width: 18px; height: 18px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; clip-path: polygon(50% 0%, 64% 15%, 85% 15%, 85% 36%, 100% 50%, 85% 64%, 85% 85%, 64% 85%, 50% 100%, 36% 85%, 15% 85%, 15% 64%, 0% 50%, 15% 36%, 15% 15%, 36% 15%); vertical-align: middle; }
 .verified-badge svg { display: block; width: 10px; height: 10px; color: #fff; stroke: currentColor; }
 .chat-person .verified-badge { color: #fff; }
@@ -262,11 +265,36 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-create-modal { width: min(100%, 500px); max-height: min(88vh, 760px); }
 .group-create-identity { display: flex; align-items: center; gap: 14px; margin: 18px 0 4px; }
 .group-avatar-picker { position: relative; flex: 0 0 64px; width: 64px; height: 64px; padding: 0; background: transparent; border: 0; border-radius: 50%; cursor: pointer; }
-.group-avatar-picker .avatar { width: 64px; height: 64px; font-size: 19px; }
+.group-avatar-picker .avatar { width: 55px; height: 55px; flex-basis: 55px; font-size: 17px; }
 .group-avatar-picker>span:last-child { position: absolute; right: -2px; bottom: -1px; display: grid; width: 25px; height: 25px; place-items: center; color: #fff; background: #368fce; border: 2px solid #fff; border-radius: 50%; }
-.group-name-field { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 6px; color: #526a84; font-size: 11px; font-weight: 600; }
+.group-name-field { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 6px; color: transparent; font-size: 0; font-weight: 600; }
 .group-name-field input { width: 100%; height: 40px; padding: 0 11px; color: #2b4058; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: 0; }
-.group-name-field input:focus { border-color: #80bdf0; box-shadow: 0 0 0 3px #88c4f21b; }
+.group-name-field input:focus { border-color: #dfe9f3; box-shadow: none; outline: none; }
+.group-name-field input { font-size: 14px; }
+.group-edit-modal { width: min(100%, 470px); }
+.group-edit-field { display: flex; flex-direction: column; gap: 6px; margin-top: 15px; color: #526a84; font-size: 12px; font-weight: 600; }
+.group-edit-field input { width: 100%; height: 40px; padding: 0 11px; font-size: 14px; }
+.group-edit-field small { color: #8293a6; font-size: 11px; font-weight: 400; line-height: 1.4; }
+.group-edit-actions { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
+.group-edit-actions>span { flex: 1; }
+.group-edit-actions button { min-height: 39px; }
+.group-delete-confirm { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; padding: 14px; background: #fff5f5; border: 1px solid #f3d9dc; border-radius: 10px; }
+.group-delete-confirm>strong { color: #8c3d47; font-size: 13px; }
+.group-delete-confirm>span { color: #815d62; font-size: 12px; line-height: 1.45; }
+.group-delete-confirm .confirm-actions { display: flex; gap: 8px; margin-top: 6px; }
+.group-delete-confirm .confirm-actions button { flex: 1; min-height: 39px; }
+.group-profile-sidebar .profile-sidebar-hero::before { height: 136px; }
+.group-profile-username { margin-top: 6px; font-size: 14px; }
+.group-profile-members { display: flex; flex-direction: column; gap: 9px; padding: 9px 0; }
+.group-profile-member { display: flex; align-items: center; gap: 9px; }
+.group-profile-member>.avatar { flex: 0 0 34px; width: 34px; height: 34px; font-size: 12px; }
+.group-profile-member>span { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.group-profile-member strong { color: #3e556e; font-size: 12px; }
+.group-profile-member small { color: #8293a6; font-size: 10px; }
+.message-action-delete { color: #fff; }
+.message-action-delete:hover { color: #fff; }
+.signout-button:hover { color: #4b6d8d; background: #edf6ff; border-color: #dce8f3; }
+.profile-cover { overflow-x: clip; overflow-y: visible; }
 .group-member-heading { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; color: #405972; font-size: 12px; }
 .group-member-heading span { color: #8293a6; font-size: 10px; }
 .group-member-picker { display: flex; max-height: min(34vh, 270px); flex-direction: column; gap: 4px; overflow-y: auto; }
@@ -295,7 +323,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .mine .message-actions-menu { right: 0; left: auto; }
 .message-actions-menu>button { display: flex; align-items: center; min-height: 38px; gap: 10px; padding: 0 9px; color: inherit; text-align: left; background: transparent; border: 0; border-radius: 7px; cursor: pointer; font-size: 12px; }
 .message-actions-menu>button:hover { background: #f0f6fb; }
-.message-actions-menu>button.message-action-delete { color: #c25f69; }
+.message-actions-menu>button.message-action-delete { color: #fff; background: #c25f69; }
+.message-actions-menu>button.message-action-delete:hover { color: #fff; background: #ad4d57; }
 .message-action-reactions { display: flex; justify-content: space-around; padding: 4px 2px 8px; border-bottom: 1px solid #edf1f6; }
 .message-action-reactions button { width: 42px; height: 36px; background: transparent; border: 0; border-radius: 8px; cursor: pointer; font-size: 20px; }
 .message-action-reactions button:hover { background: #eef6fd; }
@@ -369,13 +398,23 @@ body.milly-dark .my-id>strong { color: #e0e8f0; }
 body.milly-dark .profile-sidebar-actions .secondary-button { color: #c2cfdb; background: #2a333c; border-color: #3a4651; }
 body.milly-dark .profile-sidebar-actions .danger-button { color: #fff; background: #bd626d; border-color: #bd626d; }
 body.milly-dark .profile-sidebar-actions .primary-button.danger-button { color: #fff; background: #bd626d; border-color: #bd626d; }
-body.milly-dark .profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #a94e59; border-color: #a94e59; }
+body.milly-dark .profile-sidebar-actions .primary-button.danger-button { color: #fff; background: #b94f5b; border-color: #b94f5b; }
+body.milly-dark .profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #a9404d; border-color: #a9404d; }
+body.milly-dark .primary-button.danger-button { color: #fff; background: #b94f5b; border-color: #b94f5b; }
+body.milly-dark .primary-button.danger-button:hover:not(:disabled) { color: #fff; background: #a9404d; border-color: #a9404d; }
 body.milly-dark .profile-alias-copy, body.milly-dark .profile-aliases .profile-alias-copy { color: #9cccf0; }
 body.milly-dark .group-create-modal { color: #dce4ec; }
 body.milly-dark .group-avatar-picker>span:last-child { border-color: #222930; }
 body.milly-dark .group-name-field { color: #a0adbb; }
 body.milly-dark .group-name-field input { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
-body.milly-dark .group-name-field input:focus { border-color: #526f88; box-shadow: 0 0 0 3px #82b8e21b; }
+body.milly-dark .group-name-field input:focus { border-color: #3b4651; box-shadow: none; outline: none; }
+body.milly-dark .group-edit-field { color: #bdc9d5; }
+body.milly-dark .group-edit-field small, body.milly-dark .group-profile-member small { color: #9aa8b6; }
+body.milly-dark .group-profile-member strong { color: #dce4ec; }
+body.milly-dark .group-delete-confirm { background: #38282b; border-color: #604047; }
+body.milly-dark .group-delete-confirm>strong { color: #f0c4c8; }
+body.milly-dark .group-delete-confirm>span { color: #c9aeb1; }
+body.milly-dark .signout-button:hover { color: #d6e5f2; background: #2a333c; border-color: #3a4651; }
 body.milly-dark .group-member-heading, body.milly-dark .group-member-option { color: #dce4ec; }
 body.milly-dark .group-member-heading span, body.milly-dark .group-member-option small, body.milly-dark .group-no-members { color: #9eafbf; }
 body.milly-dark .group-member-option:hover { background: #29333c; }
@@ -1034,6 +1073,8 @@ body.milly-dark .admin-editor input:not([type="checkbox"]), body.milly-dark .adm
 }
 body.milly-dark .admin-editor input:focus, body.milly-dark .admin-editor textarea:focus, body.milly-dark .admin-search:focus-within { border-color: #526274; }
 body.milly-dark .admin-check-field, body.milly-dark .admin-date-card { background: #252d35; border-color: #36414c; }
+body.milly-dark .group-edit-field input { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
+body.milly-dark .group-edit-field input:focus { border-color: #526f88; box-shadow: none; }
 body.milly-dark .admin-check-field strong, body.milly-dark .admin-date-card strong { color: #dce4ec; }
 body.milly-dark .admin-check-field small, body.milly-dark .admin-date-card span, body.milly-dark .admin-date-card small { color: #a0adbb; }
 body.milly-dark .admin-editor-heading, body.milly-dark .admin-account-list { border-color: #36414c; }
