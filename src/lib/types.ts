@@ -4,6 +4,7 @@ export type Profile = {
   user_number: number
   username: string
   display_name: string
+  bio?: string
   avatar_path: string | null
   avatar_url?: string
   created_at?: string

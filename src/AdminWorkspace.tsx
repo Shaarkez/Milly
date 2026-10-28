@@ -246,7 +246,6 @@ export default function AdminWorkspace({ client }: { client: SupabaseClient }) {
     <header className="admin-heading"><div><span className="form-kicker">УПРАВЛЕНИЕ MILLY</span><h1>Панель администратора</h1><p>Изменения профилей защищены серверными проверками прав.</p></div><div className="admin-shield"><ShieldCheck size={19} /><span>Администратор</span></div></header>
     <nav className="admin-tabs" aria-label="Разделы панели администратора">
       <button className={section === 'accounts' ? 'selected' : ''} onClick={() => setSection('accounts')}><Users size={16} /> Аккаунты</button>
-      <button className={section === 'spaces' ? 'selected' : ''} onClick={() => setSection('spaces')}><HashIcon /> Пространства</button>
     </nav>
     {error && section === 'accounts' && !selected && <p className="admin-error" role="alert">{error}</p>}
     {section === 'accounts' ? <div className="admin-account-layout">

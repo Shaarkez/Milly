@@ -1,18 +1,15 @@
 import { Fragment, lazy, Suspense, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { ArrowLeft, AtSign, BadgeCheck, CalendarDays, Check, CheckCheck, CircleHelp, Copy, GripHorizontal, Hash, ImagePlus, LoaderCircle, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MoreHorizontal, Phone, Plus, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Trash2, Users, Video, VideoOff, Volume2, VolumeX, Wifi, WifiOff, X } from 'lucide-react'
+import { ArrowLeft, AtSign, BadgeCheck, CalendarDays, Check, CheckCheck, CircleHelp, Copy, GripHorizontal, Hash, ImagePlus, LoaderCircle, LogOut, Maximize2, MessageCircle, Mic, MicOff, Minimize2, MoreHorizontal, Phone, Search, Send, Settings2, ShieldCheck, SlidersHorizontal, Trash2, Users, Video, VideoOff, Volume2, VolumeX, X } from 'lucide-react'
 import { isSupabaseConfigured, pageSize, readableError, supabase } from './lib/supabase'
 import type { CallSignal, Conversation, FriendRequest, Message, Profile } from './lib/types'
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
 import { messagesBelongToSameGroup } from './lib/messageGrouping'
 import { mergeMessages } from './lib/messageOrdering'
-import { shouldPersistToast } from './lib/toastBehavior'
 
-type Dialog = 'friends' | 'profile' | 'peer' | null
+type Dialog = 'profile' | null
 type CallPhase = 'idle' | 'calling' | 'incoming' | 'connecting' | 'connected'
-type ChatFilter = 'all' | 'direct' | 'groups' | 'channels'
 type PendingOffer = { callId: string; from: string; offer: RTCSessionDescriptionInit }
-const ChannelsWorkspace = lazy(() => import('./ChannelsWorkspace'))
 const AdminWorkspace = lazy(() => import('./AdminWorkspace'))
 const ADMIN_USER_ID = '6a3ecd6f-7f0a-424a-a02d-ef133f23003a'
 const colors = ['#6d8371', '#8b6a5f', '#687c91', '#927b4e', '#806d88']
@@ -30,10 +27,13 @@ const dayLabel = (value: string) => {
   return new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', year: 'numeric' }).format(date)
 }
 
-function Avatar({ name, online = false, large = false, image }: { name: string; online?: boolean; large?: boolean; image?: string }) {
+function Avatar({ name, online = false, large = false, image, retryKey, onImageError }: { name: string; online?: boolean; large?: boolean; image?: string; retryKey?: string; onImageError?: () => void }) {
   const [imageFailed, setImageFailed] = useState(false)
+  const retried = useRef(false)
+  const retryIdentity = retryKey ?? image?.split('?')[0]
   useEffect(() => setImageFailed(false), [image])
-  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image && !imageFailed ? <img src={image} alt="" onError={() => setImageFailed(true)} /> : initials(name)}{online && <i className="presence-dot" />}</span>
+  useEffect(() => { retried.current = false }, [retryIdentity])
+  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image && !imageFailed ? <img src={image} alt="" onError={() => { setImageFailed(true); if (!retried.current) { retried.current = true; onImageError?.() } }} /> : initials(name)}{online && <i className="presence-dot" />}</span>
 }
 
 function AuthScreen() {
@@ -78,21 +78,20 @@ export default function Messenger() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [friends, setFriends] = useState<Profile[]>([])
   const [requests, setRequests] = useState<FriendRequest[]>([])
+  const [outgoingRequestIds, setOutgoingRequestIds] = useState<Set<string>>(new Set())
   const [active, setActive] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [hasOlder, setHasOlder] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [text, setText] = useState('')
   const [search, setSearch] = useState('')
-  const [section, setSection] = useState<'chats' | 'friends' | 'channels' | 'admin'>('chats')
-  const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [section, setSection] = useState<'chats' | 'admin'>('chats')
   const [dialog, setDialog] = useState<Dialog>(null)
   const [profileToView, setProfileToView] = useState<Profile | null>(null)
   const [profilePanelOpen, setProfilePanelOpen] = useState(false)
   const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [appearanceOpen, setAppearanceOpen] = useState(false)
   const [lightTheme, setLightTheme] = useState(() => localStorage.getItem('milly-theme') !== 'classic')
-  const [friendId, setFriendId] = useState('')
   const [friendMatches, setFriendMatches] = useState<Profile[]>([])
   const [friendSearching, setFriendSearching] = useState(false)
   const [friendToRemove, setFriendToRemove] = useState<Profile | null>(null)
@@ -100,12 +99,11 @@ export default function Messenger() {
   const [deletingMessage, setDeletingMessage] = useState(false)
   const [friendBusy, setFriendBusy] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
-  const [profileDraft, setProfileDraft] = useState({ displayName: '', username: '' })
+  const [profileDraft, setProfileDraft] = useState({ displayName: '', username: '', bio: '' })
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [online, setOnline] = useState<Set<string>>(new Set())
   const [presenceUnknown, setPresenceUnknown] = useState<Set<string>>(new Set())
-  const [connected, setConnected] = useState(navigator.onLine)
   const [sending, setSending] = useState(false)
   const [callPhase, setCallPhase] = useState<CallPhase>('idle')
   const [callMinimized, setCallMinimized] = useState(false)
@@ -122,6 +120,7 @@ export default function Messenger() {
   const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void> } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<Message[]>([])
+  const conversationsRef = useRef<Conversation[]>([])
   const activeConversationId = useRef<string | null>(null)
   const latestMessagesRef = useRef(new Map<string, Message>())
   const signedImageUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
@@ -148,6 +147,7 @@ export default function Messenger() {
   const user = session?.user
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
   messagesRef.current = messages
+  conversationsRef.current = conversations
   activeConversationId.current = active?.id ?? null
 
   useEffect(() => {
@@ -218,16 +218,15 @@ export default function Messenger() {
       setSession(nextSession)
       if (event === 'SIGNED_IN') setOwnAvatar('')
       if (event === 'SIGNED_IN' && emailConfirmedRedirect) setNotice('Электронная почта подтверждена. Добро пожаловать в Milly!')
-      if (!nextSession) { setProfile(null); setOwnAvatar(''); setFriends([]); setRequests([]); setConversations([]); setActive(null) }
+      if (!nextSession) { setProfile(null); setOwnAvatar(''); setFriends([]); setRequests([]); setOutgoingRequestIds(new Set()); setConversations([]); setActive(null) }
     })
     return () => listener.subscription.unsubscribe()
   }, [client])
 
   useEffect(() => {
-    const update = () => setConnected(navigator.onLine)
     const capture = (event: Event) => { event.preventDefault(); setInstallPrompt(event as Event & { prompt?: () => Promise<void> }) }
-    window.addEventListener('online', update); window.addEventListener('offline', update); window.addEventListener('beforeinstallprompt', capture)
-    return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); window.removeEventListener('beforeinstallprompt', capture) }
+    window.addEventListener('beforeinstallprompt', capture)
+    return () => window.removeEventListener('beforeinstallprompt', capture)
   }, [])
 
   useEffect(() => {
@@ -264,14 +263,15 @@ export default function Messenger() {
     latestMessages.clear()
     setOwnAvatar('')
     const loadAccount = async (forceAvatarRefresh = false) => {
-      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: convoRows, error: convoError }] = await Promise.all([
-        client.from('profiles').select('id,milly_id,user_number,username,display_name,avatar_path,is_verified,registration_date_override,created_at').eq('id', user.id).single(),
+      const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: outgoingRows, error: outgoingError }, { data: convoRows, error: convoError }] = await Promise.all([
+        client.from('profiles').select('id,milly_id,user_number,username,display_name,bio,avatar_path,is_verified,registration_date_override,created_at').eq('id', user.id).single(),
         client.from('friendships').select('user_low,user_high').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
         client.from('friend_requests').select('id,sender_id,receiver_id,created_at').eq('receiver_id', user.id).eq('status', 'pending'),
+        client.from('friend_requests').select('receiver_id').eq('sender_id', user.id).eq('status', 'pending'),
         client.from('conversations').select('id,user_low,user_high,updated_at').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
       ])
       if (cancelled) return
-      if (ownError || linksError || requestError || convoError) throw ownError || linksError || requestError || convoError
+      if (ownError || linksError || requestError || outgoingError || convoError) throw ownError || linksError || requestError || outgoingError || convoError
       const { data: ownAliases, error: ownAliasesError } = await client.from('profile_aliases').select('username').eq('user_id', user.id)
       if (cancelled) return
       if (ownAliasesError) throw ownAliasesError
@@ -297,7 +297,7 @@ export default function Messenger() {
       const conversationPeerIds = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => row.user_low === user.id ? row.user_high : row.user_low)
       const allIds = [...new Set([...friendIds, ...requestIds, ...conversationPeerIds])]
       const [{ data: people, error: peopleError }, { data: aliases, error: aliasesError }] = await Promise.all([
-        allIds.length ? client.from('profiles').select('id,milly_id,user_number,username,display_name,avatar_path,is_verified,registration_date_override,created_at').in('id', allIds) : Promise.resolve({ data: [], error: null }),
+        allIds.length ? client.from('profiles').select('id,milly_id,user_number,username,display_name,bio,avatar_path,is_verified,registration_date_override,created_at').in('id', allIds) : Promise.resolve({ data: [], error: null }),
         allIds.length ? client.from('profile_aliases').select('user_id,username').in('user_id', allIds) : Promise.resolve({ data: [], error: null }),
       ])
       if (cancelled) return
@@ -335,6 +335,7 @@ export default function Messenger() {
       const friendList = friendIds.map((id: string) => byId.get(id)).filter(Boolean) as Profile[]
       setFriends(friendList); friendsRef.current = friendList
       setRequests((requestRows ?? []).map((row: FriendRequest) => ({ ...row, sender: byId.get(row.sender_id) })))
+      setOutgoingRequestIds(new Set((outgoingRows ?? []).map((row: { receiver_id: string }) => row.receiver_id)))
       const chats = (convoRows ?? []).map((row: Omit<Conversation, 'peer'>) => ({ ...row, peer: byId.get(row.user_low === user.id ? row.user_high : row.user_low)! })).filter((row: Conversation) => row.peer)
       if (chats.length) {
         const { data: recent, error: recentError } = await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
@@ -408,6 +409,8 @@ export default function Messenger() {
     const accountChannel = client.channel(`account:${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friend_requests', filter: `receiver_id=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_low=eq.${user.id}` }, () => { void refreshAccount() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'conversations', filter: `user_high=eq.${user.id}` }, () => { void refreshAccount() })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
         const deletedId = old.id
         if (typeof deletedId !== 'string') return
@@ -421,6 +424,10 @@ export default function Messenger() {
         const cached = latestMessages.get(message.conversation_id)
         if (cached && cached.created_at >= message.created_at) return
         latestMessages.set(message.conversation_id, message)
+        if (!conversationsRef.current.some((conversation) => conversation.id === message.conversation_id)) {
+          void refreshAccount()
+          return
+        }
         if (latestMessages.size > 200) {
           const oldest = [...latestMessages].reduce((previous, current) =>
             previous[1].created_at <= current[1].created_at ? previous : current,
@@ -503,7 +510,8 @@ export default function Messenger() {
   }, [client, user?.id, friendIdsKey])
 
   useEffect(() => {
-    if (!client || dialog !== 'friends' || friendId.trim().length < 2) {
+    const lookup = search.trim()
+    if (!client || lookup.length < 2 || section !== 'chats') {
       setFriendMatches([])
       setFriendSearching(false)
       return
@@ -513,18 +521,23 @@ export default function Messenger() {
     setFriendSearching(true)
     const timer = window.setTimeout(async () => {
       try {
-        const { data, error: failure } = await client.rpc('search_users', { lookup_query: friendId.trim() })
+        const { data, error: failure } = await client.rpc('search_users', { lookup_query: lookup })
         if (cancelled) return
         if (failure) throw failure
-        setFriendMatches(((data ?? []) as Profile[]).filter((candidate) => !friends.some((friend) => friend.id === candidate.id)))
+        const candidates = ((data ?? []) as Profile[]).filter((candidate) => candidate.id !== user?.id)
+        const now = Date.now()
+        const urls = new Map([...signedAvatarUrls.current]
+          .filter(([, cached]) => cached.expiresAt > now + 60_000)
+          .map(([path, cached]) => [path, cached.url]))
+        setFriendMatches(candidates.map((candidate) => ({ ...candidate, avatar_url: candidate.avatar_path ? urls.get(candidate.avatar_path) : undefined })))
       } catch (caught) {
         if (!cancelled) setError(readableError(caught))
       } finally {
         if (!cancelled) setFriendSearching(false)
       }
-    }, 220)
+    }, 250)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [client, dialog, friendId, friends])
+  }, [client, search, section, user?.id])
 
   useEffect(() => {
     if (!client || !user || !active) { setMessages([]); return }
@@ -768,14 +781,63 @@ export default function Messenger() {
     })
   }
 
+  async function refreshAvatar(path: string) {
+    if (!client) return
+    try {
+      const { data, error: failure } = await client.storage.from('milly-avatars').createSignedUrl(path, 3600)
+      if (failure) throw failure
+      if (!data?.signedUrl) throw new Error(`Не удалось обновить ссылку на аватар ${path}.`)
+      const url = data.signedUrl
+      signedAvatarUrls.current.set(path, { url, expiresAt: Date.now() + 3600_000 })
+      if (profile?.avatar_path === path) setOwnAvatar(url)
+      setFriends((current) => current.map((person) => person.avatar_path === path ? { ...person, avatar_url: url } : person))
+      setConversations((current) => current.map((conversation) => conversation.peer.avatar_path === path
+        ? { ...conversation, peer: { ...conversation.peer, avatar_url: url } }
+        : conversation))
+      setActive((current) => current?.peer.avatar_path === path ? { ...current, peer: { ...current.peer, avatar_url: url } } : current)
+      setProfileToView((current) => current?.avatar_path === path ? { ...current, avatar_url: url } : current)
+    } catch (caught) {
+      setError(readableError(caught))
+    }
+  }
+
   async function openChat(friend: Profile) {
     if (!client || !user) return
     setError('')
-    const { data, error: failure } = await client.rpc('get_or_create_dm', { peer_uid: friend.id })
-    if (failure) { setError(readableError(failure)); return }
-    const conversation = conversations.find((row) => row.id === data) ?? { id: data as string, user_low: user.id < friend.id ? user.id : friend.id, user_high: user.id < friend.id ? friend.id : user.id, updated_at: new Date().toISOString(), peer: friend }
-    if (!conversations.some((row) => row.id === conversation.id)) setConversations((current) => [conversation, ...current])
-    setActive(conversation); setDialog(null); setSection('chats'); setProfilePanelOpen(false); setNotice('')
+    try {
+      const { data, error: failure } = await client.rpc('get_or_create_dm', { peer_uid: friend.id })
+      if (failure) throw failure
+      const { data: peerDetails, error: profileError } = await client.from('profiles').select('bio').eq('id', friend.id).maybeSingle()
+      if (profileError) throw profileError
+      let avatarUrl = friend.avatar_url
+      if (!avatarUrl && friend.avatar_path) {
+        const cached = signedAvatarUrls.current.get(friend.avatar_path)
+        if (cached && cached.expiresAt > Date.now() + 60_000) {
+          avatarUrl = cached.url
+        } else {
+          try {
+            const { data: signedAvatar, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(friend.avatar_path, 3600)
+            if (avatarError) setError(readableError(avatarError))
+            if (signedAvatar?.signedUrl) {
+              avatarUrl = signedAvatar.signedUrl
+              signedAvatarUrls.current.set(friend.avatar_path, { url: signedAvatar.signedUrl, expiresAt: Date.now() + 3600_000 })
+            }
+          } catch (caught) {
+            setError(readableError(caught))
+          }
+        }
+      }
+      const peer = { ...friend, ...(peerDetails ?? {}), avatar_url: avatarUrl }
+      const existing = conversations.find((row) => row.id === data)
+      const conversation = existing
+        ? { ...existing, peer }
+        : { id: data as string, user_low: user.id < friend.id ? user.id : friend.id, user_high: user.id < friend.id ? friend.id : user.id, updated_at: new Date().toISOString(), peer }
+      if (!conversations.some((row) => row.id === conversation.id)) setConversations((current) => [conversation, ...current])
+      else setConversations((current) => current.map((row) => row.id === conversation.id ? { ...row, peer } : row))
+      setActive(conversation); setDialog(null); setSection('chats'); setProfilePanelOpen(false); setNotice('')
+    } catch (caught) {
+      setError(readableError(caught))
+    }
   }
 
   async function addFriend(target: Profile) {
@@ -787,7 +849,8 @@ export default function Messenger() {
       const { error: insertError } = await client.from('friend_requests').insert({ sender_id: user.id, receiver_id: target.id })
       if (insertError?.code === '23505') throw new Error('Запрос уже отправлен или ожидает ответа.')
       if (insertError) throw insertError
-      setNotice(`Запрос отправлен ${target.display_name}.`); setFriendId(''); setFriendMatches([])
+      setOutgoingRequestIds((current) => new Set(current).add(target.id))
+      setNotice(`Запрос отправлен ${target.display_name}.`)
     } catch (caught) { setError(readableError(caught)) }
     finally { setFriendBusy(false) }
   }
@@ -797,6 +860,7 @@ export default function Messenger() {
     const result = accept ? await client.rpc('accept_friend_request', { request_id: request.id }) : await client.from('friend_requests').update({ status: 'declined' }).eq('id', request.id)
     if (result.error) { setError(readableError(result.error)); return }
     setRequests((current) => current.filter((row) => row.id !== request.id))
+    if (accept) setOutgoingRequestIds((current) => { const next = new Set(current); next.delete(request.sender_id); return next })
     if (accept && request.sender) {
       const next = [...friends, request.sender]
       setFriends(next); friendsRef.current = next
@@ -1182,10 +1246,12 @@ export default function Messenger() {
     try {
       setProfileSaving(true)
       const username = usernameSchema.parse(formData.get('username')?.toString() ?? '')
-      const { error: failure } = await client.from('profiles').update({ display_name: name, username }).eq('id', user.id)
+      const bio = formData.get('bio')?.toString().trim() ?? ''
+      if (bio.length > 160) throw new Error('Описание профиля должно быть не длиннее 160 символов.')
+      const { error: failure } = await client.from('profiles').update({ display_name: name, username, bio }).eq('id', user.id)
       if (failure?.code === '23505') throw new Error('Этот юзернейм уже занят.')
       if (failure) throw failure
-      setProfile({ ...profile, display_name: name, username }); setProfileDraft({ displayName: name, username }); setNotice('Профиль сохранён.')
+      setProfile({ ...profile, display_name: name, username, bio }); setProfileDraft({ displayName: name, username, bio }); setNotice('Профиль сохранён.')
     } catch (caught) { setError(readableError(caught)) }
     finally { setProfileSaving(false) }
   }
@@ -1199,55 +1265,49 @@ export default function Messenger() {
   if (!session) return <AuthScreen />
   const query = search.toLowerCase()
   const visibleChats = conversations.filter((row) => row.peer.display_name.toLowerCase().includes(query) || row.peer.username.includes(query.replace(/^@/, '')) || row.peer.aliases?.some((alias) => alias.includes(query.replace(/^@/, ''))) || `#${row.peer.user_number}`.includes(query.replace(/^#/, '')))
-  const visibleFriends = friends.filter((friend) => friend.display_name.toLowerCase().includes(query) || friend.username.includes(query.replace(/^@/, '')) || friend.aliases?.some((alias) => alias.includes(query.replace(/^@/, ''))) || `#${friend.user_number}`.includes(query.replace(/^#/, '')))
   const peer = active?.peer
   const callPeerId = callRef.current?.peer ?? pendingOffer.current?.from
   const callPeer = friends.find((friend) => friend.id === callPeerId)
-  const setChatCategory = (category: ChatFilter) => {
-    setChatFilter(category)
-    if (category === 'groups' || category === 'channels') {
-      setSection('channels')
-      setProfilePanelOpen(false)
-    } else {
-      setSection('chats')
-    }
-  }
-
+  const presenceLabel = (profileId: string) => online.has(profileId)
+    ? 'В сети'
+    : presenceUnknown.has(profileId)
+      ? 'Статус недоступен'
+      : friends.some((friend) => friend.id === profileId)
+        ? 'Не в сети'
+        : 'Добавьте в контакты для статуса'
   return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}`}><aside className="sidebar">
-    <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти сообщения" aria-label="Найти сообщения" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button><button className="icon-button" title="Добавить друга" aria-label="Добавить друга" onClick={() => setDialog('friends')}><Plus size={16} /></button><span className="network-status" title={connected ? 'Подключено' : 'Нет подключения'}>{connected ? <Wifi size={14} /> : <WifiOff size={14} />}</span></div></div>
+    <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти чаты и людей" aria-label="Найти чаты и людей" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button></div></div>
     {presenceUnknown.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
-    <label className="search-box"><Search size={15} /><input placeholder="Поиск чатов и людей…" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
-    <nav className="chat-category-tabs" aria-label="Фильтр переписок">
-      <button className={section === 'chats' && chatFilter === 'all' ? 'selected' : ''} onClick={() => setChatCategory('all')}>Все</button>
-      <button className={section === 'chats' && chatFilter === 'direct' ? 'selected' : ''} onClick={() => setChatCategory('direct')}>Личные</button>
-      <button className={section === 'channels' && chatFilter === 'groups' ? 'selected' : ''} onClick={() => setChatCategory('groups')}>Группы</button>
-      <button className={section === 'channels' && chatFilter === 'channels' ? 'selected' : ''} onClick={() => setChatCategory('channels')}>Каналы</button>
-    </nav>
-    <div className="sidebar-section-heading"><span>{section === 'friends' ? 'КОНТАКТЫ' : section === 'channels' ? 'ПРОСТРАНСТВА И КАНАЛЫ' : 'СООБЩЕНИЯ'}</span><button className="icon-button" title="Добавить друга" aria-label="Добавить друга" onClick={() => setDialog('friends')}><Plus size={16} /></button></div>
-    <nav className="section-tabs" aria-label="Разделы"><button className={section === 'chats' ? 'selected' : ''} onClick={() => { setSection('chats'); setChatFilter('all') }}><MessageCircle size={15} /> Личные <span>{conversations.length || ''}</span></button><button className={section === 'friends' ? 'selected' : ''} onClick={() => setSection('friends')}><Users size={15} /> Друзья <span>{friends.length || ''}</span></button><button className={section === 'channels' ? 'selected' : ''} onClick={() => { setSection('channels'); setChatFilter('channels') }}><Hash size={15} /> Каналы</button>{profile?.id === ADMIN_USER_ID && <button className={section === 'admin' ? 'selected' : ''} onClick={() => setSection('admin')}><ShieldCheck size={15} /> Управление</button>}</nav>
-    {section === 'chats' ? <div className="contact-list">{visibleChats.length ? visibleChats.map((chat) => <button className={`contact-row${active?.id === chat.id ? ' active' : ''}`} key={chat.id} onClick={() => { setActive(chat); setSection('chats'); setError('') }}><Avatar name={chat.peer.display_name} online={online.has(chat.peer.id)} image={chat.peer.avatar_url} /><span className="contact-copy"><span className="contact-name">{chat.peer.display_name}{chat.peer.is_verified && <ShieldCheck className="verified-mark" size={13} />}</span><span className="contact-preview">{chat.lastMessage?.image_path ? 'Фотография' : chat.lastMessage?.body || 'Начните разговор'}</span></span>{chat.lastMessage && <span className="contact-time">{displayDate(chat.lastMessage.created_at)}</span>}</button>) : <EmptyList icon={<MessageCircle size={17} />} title="Разговоров пока нет" action="Найти друга" onClick={() => setDialog('friends')} />}</div> : section === 'friends' ? <div className="contact-list">{requests.length > 0 && <div className="request-group"><span className="request-label">ЗАПРОСЫ · {requests.length}</span>{requests.map((request) => <RequestRow key={request.id} request={request} onHandle={handleRequest} />)}</div>}{visibleFriends.map((friend) => <button className="contact-row" key={friend.id} onClick={() => void openChat(friend)}><Avatar name={friend.display_name} online={online.has(friend.id)} image={friend.avatar_url} /><span className="contact-copy"><span className="contact-name">{friend.display_name}{friend.is_verified && <ShieldCheck className="verified-mark" size={13} />}</span><span className="contact-preview">{online.has(friend.id) ? 'В сети' : `#${friend.user_number} · @${friend.username}`}</span></span></button>)}{!visibleFriends.length && !requests.length && <EmptyList icon={<Users size={17} />} title="Здесь будут ваши друзья" action="Добавить друга" onClick={() => setDialog('friends')} />}</div> : <div className="contact-list sidebar-channel-hint"><Hash size={20} /><strong>Пространства и каналы</strong><span>Выберите канал в рабочей области.</span></div>}
-    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <ShieldCheck className="verified-mark" size={13} />}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ displayName: profile.display_name, username: profile.username }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('friends') }}><Users size={16} /> Контакты</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('channels'); setChatFilter('channels') }}><Hash size={16} /> Пространства и каналы</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
+    <label className="search-box"><Search size={15} /><input placeholder="Поиск по @username или ID…" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
+    <div className="sidebar-section-heading"><span>{section === 'admin' ? 'УПРАВЛЕНИЕ' : search.trim() ? 'ПОИСК' : 'СООБЩЕНИЯ'}</span></div>
+    {section === 'chats' ? <div className="contact-list">
+      {!search.trim() && requests.length > 0 && <div className="request-group"><span className="request-label">ЗАПРОСЫ · {requests.length}</span>{requests.map((request) => <RequestRow key={request.id} request={request} onHandle={handleRequest} />)}</div>}
+      {friendSearching && <div className="friend-search-empty">Ищем людей…</div>}
+      {friendMatches.length > 0 && <div className="friend-suggestions" role="listbox" aria-label="Найденные люди">{friendMatches.map((candidate) => <button key={candidate.id} type="button" className="friend-suggestion" role="option" aria-selected="false" onClick={() => void openChat(candidate)}><Avatar name={candidate.display_name} image={candidate.avatar_url} onImageError={candidate.avatar_path ? () => void refreshAvatar(candidate.avatar_path!) : undefined} /><span className="friend-suggestion-copy"><strong>{candidate.display_name}{candidate.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={11} /></span>}</strong><span>#{candidate.user_number} · @{candidate.username}{candidate.aliases?.length ? ` · ещё ${candidate.aliases.map((alias) => `@${alias}`).join(', ')}` : ''}</span></span><MessageCircle size={16} /></button>)}</div>}
+      {visibleChats.map((chat) => <button className={`contact-row${active?.id === chat.id ? ' active' : ''}`} key={chat.id} onClick={() => { setActive(chat); setSection('chats'); setError('') }}><Avatar name={chat.peer.display_name} online={online.has(chat.peer.id)} image={chat.peer.avatar_url} onImageError={chat.peer.avatar_path ? () => void refreshAvatar(chat.peer.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{chat.peer.display_name}{chat.peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={11} /></span>}</span><span className="contact-preview">{chat.lastMessage?.image_path ? 'Фотография' : chat.lastMessage?.body || 'Начните разговор'}</span></span>{chat.lastMessage && <span className="contact-time">{displayDate(chat.lastMessage.created_at)}</span>}</button>)}
+      {!friendSearching && search.trim().length >= 2 && friendMatches.length === 0 && visibleChats.length === 0 && <div className="friend-search-empty">Совпадений пока нет. Попробуйте начало username или номер ID.</div>}
+      {!search.trim() && !visibleChats.length && !requests.length && <EmptyList icon={<MessageCircle size={17} />} title="Разговоров пока нет" action="Найти человека" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()} />}
+    </div> : null}
+    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={11} /></span>}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ displayName: profile.display_name, username: profile.username, bio: profile.bio ?? '' }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
   </aside>
 
-  <section className="chat-pane">{section === 'admin' && client ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем панель…</div>}><AdminWorkspace client={client} /> </Suspense> : section === 'channels' && client && user && profile ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем каналы…</div>}><ChannelsWorkspace client={client} user={user} profile={{ ...profile, avatar_url: ownAvatar }} friends={friends} onBack={() => setSection('chats')} /></Suspense> : active && peer ? <>
-    <header className="chat-header"><button className="icon-button mobile-back" aria-label="Назад" onClick={() => setActive(null)}><ArrowLeft size={18} /></button><button className="chat-avatar-button" aria-label="Открыть профиль" onClick={() => { setProfileToView(peer); setProfilePanelOpen(true) }}><Avatar name={peer.display_name} online={online.has(peer.id)} large image={peer.avatar_url} /></button><button className="chat-person chat-person-button" onClick={() => { setProfileToView(peer); setProfilePanelOpen((open) => !open) }}><strong>{peer.display_name}{peer.is_verified && <ShieldCheck className="verified-mark" size={14} />}</strong><span>{online.has(peer.id) ? 'В сети' : 'Не в сети'}</span></button><div className="header-actions"><button className="icon-button call-button" title="Голосовой звонок" aria-label="Голосовой звонок" onClick={() => void startCall(peer)}><Phone size={18} /></button><button className="icon-button video-call-button" title="Видеозвонок" aria-label="Видеозвонок" onClick={() => void startCall(peer, true)}><Video size={18} /></button><button className="icon-button" title="Удалить из друзей" aria-label="Удалить из друзей" onClick={() => setFriendToRemove(peer)}><MoreHorizontal size={19} /></button></div></header>
-    <div className="messages-scroll" ref={scrollRef}>{loadingMessages && <div className="history-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговор</div>}{hasOlder && !loadingMessages && <button className="older-button" onClick={() => void loadOlder()}>Показать предыдущие сообщения</button>}{messages.length === 0 && !loadingMessages ? <div className="chat-begin"><div className="begin-icon"><MessageCircle size={24} /></div><span>СЕЙЧАС ВЫ ЗДЕСЬ</span><h2>Начало хорошего<br />разговора.</h2><p>Напишите {peer.display_name}, и это место станет вашим.</p></div> : <div className="message-list">{messages.map((message, index) => {
+  <section className="chat-pane">{section === 'admin' && client ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем панель…</div>}><AdminWorkspace client={client} /> </Suspense> : active && peer ? <>
+    <header className="chat-header"><button className="icon-button mobile-back" aria-label="Назад" onClick={() => setActive(null)}><ArrowLeft size={18} /></button><button className="chat-avatar-button" aria-label="Открыть профиль" onClick={() => { setProfileToView(peer); setProfilePanelOpen(true) }}><Avatar name={peer.display_name} online={online.has(peer.id)} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /></button><button className="chat-person chat-person-button" onClick={() => { setProfileToView(peer); setProfilePanelOpen((open) => !open) }}><strong>{peer.display_name}{peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={12} /></span>}</strong><span>{presenceLabel(peer.id)}</span></button><div className="header-actions"><button className="icon-button call-button" title="Голосовой звонок" aria-label="Голосовой звонок" onClick={() => void startCall(peer)}><Phone size={18} /></button></div></header>
+    <div className="messages-scroll" ref={scrollRef}><div className="chat-info-banner"><Avatar name={peer.display_name} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /><div><strong>{peer.display_name}{peer.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={12} /></span>}</strong><span>@{peer.username} · #{peer.user_number}</span>{peer.bio && <p>{peer.bio}</p>}<small>{friends.some((friend) => friend.id === peer.id) ? 'Личный чат · сообщения видны только участникам' : 'Можно написать, даже если запрос в контакты ещё не принят.'}</small></div></div>{loadingMessages && <div className="history-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговор</div>}{hasOlder && !loadingMessages && <button className="older-button" onClick={() => void loadOlder()}>Показать предыдущие сообщения</button>}{messages.length === 0 && !loadingMessages ? <div className="chat-begin"><div className="begin-icon"><MessageCircle size={24} /></div><span>СЕЙЧАС ВЫ ЗДЕСЬ</span><h2>Начало хорошего<br />разговора.</h2><p>Напишите {peer.display_name}, и это место станет вашим.</p></div> : <div className="message-list">{messages.map((message, index) => {
       const mine = message.sender_id === user?.id; const previous = messages[index - 1]
       const groupStart = !previous || !messagesBelongToSameGroup(previous, message)
       const next = messages[index + 1]
       const groupEnd = !next || !messagesBelongToSameGroup(message, next)
       const groupPosition = groupStart ? groupEnd ? 'group-single' : 'group-start' : groupEnd ? 'group-end' : 'group-middle'
       const newDay = !previous || new Date(message.created_at).toDateString() !== new Date(previous.created_at).toDateString()
-      return <Fragment key={message.id}>{newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}<div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>{!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} />}{!mine && !groupStart && <span className="avatar-spacer" />}<div className="message-content">{message.image_url && <button className="message-image" title="Открыть фотографию" onClick={() => window.open(message.image_url, '_blank', 'noopener,noreferrer')}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}{message.body && <div className="message-bubble">{message.body}</div>}{groupEnd && <span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span>}{mine && <button type="button" className="message-delete-button" title="Удалить сообщение" aria-label="Удалить сообщение" onClick={() => setMessageToDelete(message)}><Trash2 size={14} /></button>}</div></div></Fragment>
+      return <Fragment key={message.id}>{newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}<div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>{!mine && groupStart && <Avatar name={peer.display_name} image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} />}{!mine && !groupStart && <span className="avatar-spacer" />}<div className="message-content">{message.image_url && <button className="message-image" title="Открыть фотографию" onClick={() => window.open(message.image_url, '_blank', 'noopener,noreferrer')}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" /></button>}{message.body && <div className="message-bubble">{message.body}</div>}{groupEnd && <span className="message-meta">{clock(message.created_at)}{mine && <CheckCheck size={13} />}</span>}{mine && <button type="button" className="message-delete-button" title="Удалить сообщение" aria-label="Удалить сообщение" onClick={() => setMessageToDelete(message)}><Trash2 size={14} /></button>}</div></div></Fragment>
     })}</div>}</div>
     <form className="composer" onSubmit={(event) => void sendMessage(event)}><input ref={fileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendMessage(undefined, file); event.target.value = '' }} /><button type="button" className="icon-button attach-button" title="Прикрепить фотографию" aria-label="Прикрепить фотографию" onClick={() => fileRef.current?.click()}><ImagePlus size={19} /></button><textarea ref={composerRef} value={text} onChange={(event) => { const textarea = event.currentTarget; setText(textarea.value); textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px` }} onKeyDown={composerKey} placeholder="Напишите сообщение…" rows={1} maxLength={4000} aria-label="Текст сообщения" /><button type="submit" className="send-button" disabled={sending || !text.trim()} aria-label="Отправить сообщение">{sending ? <LoaderCircle className="spin" size={17} /> : <Send size={17} />}</button></form>
-  </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => setDialog('friends')}><Users size={16} /> Добавить друга</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>
+  </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={16} /> Найти человека</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>
 
-  {profilePanelOpen && profileToView && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя"><header className="profile-sidebar-header"><button className="icon-button profile-sidebar-back" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><ArrowLeft size={17} /></button><strong>Профиль</strong><button className="icon-button" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><X size={17} /></button></header><div className="profile-sidebar-content"><div className="profile-sidebar-hero"><Avatar name={profileToView.display_name} large image={profileToView.avatar_url} /><strong>{profileToView.display_name}{profileToView.is_verified && <ShieldCheck className="verified-mark" size={17} />}</strong><span>@{profileToView.username}</span><small className={online.has(profileToView.id) ? 'profile-status online' : 'profile-status'}><i />{online.has(profileToView.id) ? 'В сети' : 'Не в сети'}</small></div><div className="profile-info-list"><div><span className="profile-info-icon"><BadgeCheck size={15} /></span><span><small>Username</small><strong>@{profileToView.username}</strong></span></div><div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div><div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div><div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>{Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><strong>{profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</strong></span></div>}</div><div className="profile-sidebar-actions"><button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button><button className="secondary-button danger-button" onClick={() => { setProfilePanelOpen(false); setFriendToRemove(profileToView) }}><Users size={15} /> Удалить из контактов</button></div></div></aside>}
+  {profilePanelOpen && profileToView && section === 'chats' && <aside className="profile-sidebar" aria-label="Профиль пользователя"><header className="profile-sidebar-header"><button className="icon-button profile-sidebar-back" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><ArrowLeft size={17} /></button><strong>Профиль</strong><button className="icon-button" onClick={() => setProfilePanelOpen(false)} aria-label="Закрыть профиль"><X size={17} /></button></header><div className="profile-sidebar-content"><div className="profile-sidebar-hero"><Avatar name={profileToView.display_name} large image={profileToView.avatar_url} onImageError={profileToView.avatar_path ? () => void refreshAvatar(profileToView.avatar_path!) : undefined} /><strong>{profileToView.display_name}{profileToView.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={13} /></span>}</strong><span>@{profileToView.username}</span><small className={online.has(profileToView.id) ? 'profile-status online' : 'profile-status'}><i />{presenceLabel(profileToView.id)}</small>{profileToView.bio && <p className="profile-bio">{profileToView.bio}</p>}</div><div className="profile-info-list"><div><span className="profile-info-icon"><BadgeCheck size={15} /></span><span><small>Username</small><strong>@{profileToView.username}</strong></span></div><div><span className="profile-info-icon"><Hash size={15} /></span><span><small>ID аккаунта</small><strong>#{profileToView.user_number}</strong></span></div><div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата регистрации</small><strong>{profileDate(profileToView.registration_date_override ?? profileToView.created_at ?? '')}</strong></span></div><div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong>{profileToView.is_verified ? 'Подтверждён' : 'Не подтверждён'}</strong></span></div>{Boolean(profileToView.aliases?.length) && <div><span className="profile-info-icon"><AtSign size={15} /></span><span><small>Дополнительные username</small><strong>{profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</strong></span></div>}</div><div className="profile-sidebar-actions"><button className="primary-button" onClick={() => setProfilePanelOpen(false)}><MessageCircle size={15} /> Написать сообщение</button>{friends.some((friend) => friend.id === profileToView.id) ? <button className="primary-button danger-button" disabled={friendBusy} onClick={() => { setProfilePanelOpen(false); setFriendToRemove(profileToView) }}><Users size={15} /> Удалить из контактов</button> : outgoingRequestIds.has(profileToView.id) ? <button className="secondary-button" disabled><Users size={15} /> Запрос отправлен</button> : requests.some((request) => request.sender_id === profileToView.id) ? <button className="secondary-button" disabled><Users size={15} /> Запрос получен · смотрите входящие</button> : <button className="secondary-button" disabled={friendBusy} onClick={() => void addFriend(profileToView)}><Users size={15} /> Добавить в контакты</button>}</div></div></aside>}
   {(error || notice) && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
-  {dialog === 'friends' && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОПОЛНИТЬ СВОЙ КРУГ</span><h2 id="friend-title">Найти друга</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><p>Ищите по статическому ID или началу юзернейма. Начните вводить — подходящие аккаунты появятся сразу.</p><form className="add-friend-form" onSubmit={(event) => { event.preventDefault(); if (friendMatches.length === 1) void addFriend(friendMatches[0]); else setNotice('Выберите пользователя из списка.') }}><label htmlFor="friend-id">@USERNAME ИЛИ #ID</label><div><input id="friend-id" value={friendId} onChange={(event) => { setFriendId(event.target.value); setError(''); setNotice('') }} placeholder="Введите @username" autoFocus autoComplete="off" required /><button className="primary-button" disabled={friendBusy || friendMatches.length !== 1}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />} Отправить запрос</button></div></form>{friendSearching ? <p className="friend-search-empty">Ищем пользователей…</p> : friendMatches.length > 0 ? <div className="friend-suggestions" role="listbox" aria-label="Результаты поиска">{friendMatches.map((candidate) => <button key={candidate.id} type="button" className="friend-suggestion" role="option" aria-selected="false" disabled={friendBusy} onClick={() => void addFriend(candidate)}><Avatar name={candidate.display_name} image={candidate.avatar_url} /><span className="friend-suggestion-copy"><strong>{candidate.display_name}{candidate.is_verified && <ShieldCheck className="verified-mark" size={13} />}</strong><span>#{candidate.user_number} · @{candidate.username}{candidate.aliases?.length ? ` · ещё ${candidate.aliases.map((alias) => `@${alias}`).join(', ')}` : ''}</span></span><Plus size={16} /></button>)}</div> : friendId.trim().length >= 2 && <p className="friend-search-empty">Подходящих пользователей не найдено.</p>}<div className="profile-identifiers"><div className="my-id"><span>ВАШ ID</span><strong>#{profile?.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile?.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div>{requests.length > 0 && <div className="modal-requests"><span className="request-label">ВХОДЯЩИЕ ЗАПРОСЫ</span>{requests.map((request) => <RequestRow key={request.id} request={request} onHandle={handleRequest} />)}</div>}</section></div>}
-  {dialog === 'peer' && profileToView && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal peer-profile-modal" role="dialog" aria-modal="true" aria-labelledby="peer-profile-title"><div className="modal-heading"><span className="form-kicker">ПРОФИЛЬ ДРУГА</span><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover peer-profile-cover"><span className="profile-cover-orbit" /><Avatar name={profileToView.display_name} large image={profileToView.avatar_url} /></div><div className="profile-identity"><strong id="peer-profile-title">{profileToView.display_name}{profileToView.is_verified && <ShieldCheck className="verified-mark" size={17} />}</strong><span>@{profileToView.username}</span>{Boolean(profileToView.aliases?.length) && <small className="profile-aliases">Также: {profileToView.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profileToView.registration_date_override && <small className="profile-date">В Milly с {profileDate(profileToView.registration_date_override)}</small>}<small className={online.has(profileToView.id) ? 'peer-online' : ''}><i />{online.has(profileToView.id) ? 'В сети' : 'Участник Milly'}</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profileToView.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => { void navigator.clipboard.writeText(`#${profileToView.user_number}`); setNotice('ID скопирован.') }}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profileToView.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => { void navigator.clipboard.writeText(`@${profileToView.username}`); setNotice('Юзернейм скопирован.') }}><Copy size={16} /></button></div></div><div className="peer-profile-actions"><button className="primary-button" onClick={() => { setDialog(null); void startCall(profileToView) }}><Phone size={16} /> Позвонить</button><button className="secondary-button" onClick={() => { void openChat(profileToView) }}><MessageCircle size={16} /> Открыть чат</button><button className="secondary-button danger-button" onClick={() => { setDialog(null); setFriendToRemove(profileToView) }}>Удалить из друзей</button></div></section></div>}
-  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <ShieldCheck className="verified-mark" size={17} />}</strong><span>@{profile.username}</span>{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div><form className="profile-edit" onSubmit={(event) => void saveName(event)}><div className="profile-section-title">Редактор профиля</div><div className="profile-editor-preview"><Avatar name={profileDraft.displayName || profile.display_name} image={ownAvatar} /><span><strong>{profileDraft.displayName || profile.display_name}</strong><small>@{profileDraft.username || profile.username}</small></span></div><label>Имя<input name="display_name" value={profileDraft.displayName} onChange={(event) => setProfileDraft((draft) => ({ ...draft, displayName: event.target.value }))} maxLength={40} required /></label><label>Username<input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></label><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ displayName: profile.display_name, username: profile.username }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
+  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><BadgeCheck size={13} /></span>}</strong><span>@{profile.username}</span>{profile.bio && <small className="profile-bio">{profile.bio}</small>}{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div><form className="profile-edit" onSubmit={(event) => void saveName(event)}><div className="profile-section-title">Редактор профиля</div><div className="profile-editor-preview"><Avatar name={profileDraft.displayName || profile.display_name} image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profileDraft.displayName || profile.display_name}</strong><small>@{profileDraft.username || profile.username}</small></span></div><label>Имя<input name="display_name" value={profileDraft.displayName} onChange={(event) => setProfileDraft((draft) => ({ ...draft, displayName: event.target.value }))} maxLength={40} required /></label><label>Username<input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></label><label>Описание профиля<textarea name="bio" value={profileDraft.bio} onChange={(event) => setProfileDraft((draft) => ({ ...draft, bio: event.target.value }))} maxLength={160} rows={3} placeholder="Пара слов о себе" /></label><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ displayName: profile.display_name, username: profile.username, bio: profile.bio ?? '' }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
   {friendToRemove && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !friendBusy) setFriendToRemove(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="remove-friend-title">Удалить из друзей?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={friendBusy} onClick={() => setFriendToRemove(null)}><X size={18} /></button></div><p>{friendToRemove.display_name} исчезнет из списка друзей. История переписки останется.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={friendBusy} onClick={() => setFriendToRemove(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={friendBusy} onClick={() => void removeFriend(friendToRemove)}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : null}Удалить из друзей</button></div></section></div>}
   {messageToDelete && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingMessage) setMessageToDelete(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-message-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="delete-message-title">Удалить сообщение?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}><X size={18} /></button></div><p>Сообщение будет удалено у вас и у собеседника. Это действие нельзя отменить.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={deletingMessage} onClick={() => void deleteMessage(messageToDelete)}>{deletingMessage && <LoaderCircle className="spin" size={16} />}Удалить сообщение</button></div></section></div>}
   {appearanceOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAppearanceOpen(false) }}><section className="modal appearance-modal" role="dialog" aria-modal="true" aria-labelledby="appearance-title"><div className="modal-heading"><div><span className="form-kicker">НАСТРОЙКИ</span><h2 id="appearance-title">Оформление</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setAppearanceOpen(false)}><X size={18} /></button></div><p>Выберите тему для Milly. Настройка сохраняется на этом устройстве.</p><button className={`theme-option${lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(true)}><span className="theme-preview theme-preview-light" /><span><strong>Светло-голубая</strong><small>Светлый фон и голубые акценты</small></span><span className="theme-radio" /></button><button className={`theme-option${!lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(false)}><span className="theme-preview theme-preview-dark" /><span><strong>Тёмная</strong><small>Спокойные тёмные поверхности</small></span><span className="theme-radio" /></button></section></div>}
@@ -1270,13 +1330,11 @@ function RequestRow({ request, onHandle }: { request: FriendRequest; onHandle: (
 function Toast({ message, error = false, onClose }: { message: string; error?: boolean; onClose: () => void }) {
   const dismiss = useRef(onClose)
   dismiss.current = onClose
-  const persistent = shouldPersistToast(message)
   useEffect(() => {
-    if (persistent) return
     const timer = window.setTimeout(() => dismiss.current(), 4500)
     return () => window.clearTimeout(timer)
-  }, [message, persistent])
-  return <div className={`toast${error ? ' toast-error' : ''}`} role={error ? 'alert' : 'status'}><span className="toast-copy"><span>{message}</span>{persistent && <small>Уведомление останется, пока вы его не закроете.</small>}</span><button aria-label="Закрыть" onClick={onClose}><X size={15} /></button></div>
+  }, [message])
+  return <div className={`toast${error ? ' toast-error' : ''}`} role={error ? 'alert' : 'status'}><span className="toast-copy"><span>{message}</span></span><button aria-label="Закрыть" onClick={onClose}><X size={15} /></button></div>
 }
 
 function CallWindow({ phase, minimized, peerName, peerAvatar, duration, muted, remoteVolume, onRemoteVolumeChange, videoCall, cameraEnabled, localMedia, remoteMedia, onAccept, onMute, onCamera, onMinimize, onRestore, onEnd }: { phase: CallPhase; minimized: boolean; peerName: string; peerAvatar?: string; duration: number; muted: boolean; remoteVolume: number; onRemoteVolumeChange: (volume: number) => void; videoCall: boolean; cameraEnabled: boolean; localMedia: MediaStream | null; remoteMedia: MediaStream | null; onAccept: () => void; onMute: () => void; onCamera: () => void; onMinimize: () => void; onRestore: () => void; onEnd: () => void }) {
@@ -1341,7 +1399,8 @@ function CallWindow({ phase, minimized, peerName, peerAvatar, duration, muted, r
     if (dragOrigin.current?.pointerId === event.pointerId) dragOrigin.current = null
   }
   const label = phase === 'incoming' ? 'ВХОДЯЩИЙ ЗВОНОК' : phase === 'calling' ? 'ВЫЗЫВАЕМ' : phase === 'connecting' ? 'СОЕДИНЕНИЕ' : 'РАЗГОВОР'
-  if (minimized) return <div className="call-mini" role="region" aria-label="Свернутый звонок">
+  if (minimized) return <div ref={cardRef} className="call-mini" role="region" aria-label="Свернутый звонок" style={position ? { left: position.left, top: position.top, right: 'auto', bottom: 'auto' } : undefined}>
+    <div className="call-mini-drag-handle" title="Перетащите мини-окно звонка" onPointerDown={beginDrag} onPointerMove={moveCard} onPointerUp={endDrag} onPointerCancel={endDrag}><GripHorizontal size={17} /></div>
     <button className="call-mini-identity" onClick={onRestore} title="Развернуть звонок">
       <Avatar name={peerName} image={peerAvatar} />
       <span><strong>{peerName}</strong><small>{phase === 'connected' ? `${String(Math.floor(duration / 60)).padStart(2, '0')}:${String(duration % 60).padStart(2, '0')}` : label}</small></span>
@@ -1354,7 +1413,7 @@ function CallWindow({ phase, minimized, peerName, peerAvatar, duration, muted, r
     <div
       ref={cardRef}
       className={`call-card${videoCall ? ' video-call-card' : ''}`}
-      style={position ? { position: 'fixed', left: position.left, top: position.top, transform: 'none' } : undefined}
+      style={position ? { position: 'fixed', left: position.left, top: position.top, right: 'auto', bottom: 'auto', transform: 'none' } : undefined}
     >
       <div
         className="call-drag-handle"

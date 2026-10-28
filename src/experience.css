@@ -29,7 +29,7 @@ body {
 }
 
 .message-row {
-  align-items: flex-start;
+  align-items: center;
 }
 
 .message-row .message-bubble {
