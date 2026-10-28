@@ -2177,8 +2177,8 @@ export default function Messenger() {
         <Avatar name={active.group.name} large image={active.group.avatar_url} onImageError={active.group.avatar_path ? () => void refreshAvatar(active.group!.avatar_path!) : undefined} />
         <strong>{active.group.name}{active.group.is_verified && <span className="verified-badge" aria-label="Подтверждённая группа"><Check size={11} strokeWidth={3} /></span>}</strong>
         {active.group.public_username && <button type="button" className="profile-username-copy group-profile-username" onClick={() => void copyAlias(active.group!.public_username!)}>@{active.group.public_username}</button>}
+        {active.group.description && <p className="group-profile-description">{active.group.description}</p>}
       </div>
-      {active.group.description && <p className="group-profile-description">{active.group.description}</p>}
       <div className="profile-info-list group-profile-info-list">
         <div><span className="profile-info-icon"><CalendarDays size={15} /></span><span><small>Дата создания</small><strong>{profileDate(active.group.created_at)}</strong></span></div>
         <div><span className="profile-info-icon"><ShieldCheck size={15} /></span><span><small>Верификация</small><strong className={active.group.is_verified ? 'chat-info-positive' : ''}>{active.group.is_verified ? 'Подтверждена' : 'Нет'}</strong></span></div>

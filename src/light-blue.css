@@ -291,8 +291,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-invite-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: #405972; }
 .group-invite-heading strong { font-size: 12px; font-weight: 700; }
 .group-invite-heading small { color: #8293a6; font-size: 11px; }
-.group-member-search { width: 100%; height: 36px; margin: 5px 0 7px; padding: 0 10px; color: #354b64; background: #f8fbfe; border: 1px solid #dfe9f3; border-radius: 8px; outline: none; font-size: 12px; }
-.group-member-search:focus { border-color: #9fc9e9; box-shadow: 0 0 0 2px #88c4f21b; }
+.group-member-search { width: 100%; height: 36px; margin: 5px 0 7px; padding: 0 10px; color: #354b64; background: #f4f8fc; border: 0; border-radius: 8px; outline: none; box-shadow: none; font-size: 12px; }
+.group-member-search:focus { border: 0; box-shadow: none; outline: none; }
 .group-invite-list { display: flex; max-height: min(28vh, 220px); flex-direction: column; gap: 4px; overflow-y: auto; }
 .group-invite-submit { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; min-height: 38px; margin-top: 8px; }
 .group-edit-actions { display: flex; align-items: center; gap: 8px; margin-top: 20px; }
@@ -305,14 +305,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .group-delete-confirm .confirm-actions button { flex: 1; min-height: 39px; }
 .group-delete-confirm .confirm-actions .primary-button.danger-button { color: #b94f59; background: #ffe9e9; border-color: #f3d1d1; box-shadow: none; }
 .group-delete-confirm .confirm-actions .primary-button.danger-button:hover:not(:disabled) { color: #a63e49; background: #ffdddd; border-color: #eabebe; }
+.group-profile-sidebar .profile-sidebar-hero { border-bottom: 0; }
 .group-profile-sidebar .profile-sidebar-hero::before { height: 136px; }
 .group-profile-username { margin-top: 6px; font-size: 14px; }
 .group-profile-members { display: flex; flex-direction: column; gap: 9px; padding: 9px 0; }
 .group-profile-info-list>div:last-child { border-bottom: 0; }
 .group-profile-info-list { padding-bottom: 4px; border-bottom: 1px solid #e8eef4; }
-.group-profile-description { margin: 0 0 8px; color: #627891; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.group-profile-description { max-width: 100%; margin: 8px 0 0; color: #627891; font-size: 12px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; white-space: pre-wrap; }
 .group-profile-members-section { width: 100%; margin-top: 0; }
-.group-profile-members-heading { display: flex; align-items: center; gap: 9px; padding: 5px 0 8px; color: #405972; }
+.group-profile-members-heading { display: flex; min-height: 64px; box-sizing: border-box; align-items: center; gap: 9px; padding: 0; color: #405972; }
 .group-profile-members-heading .profile-info-icon { flex: 0 0 34px; }
 .group-profile-members-heading strong { color: #405972; font-size: 12px; font-weight: 600; }
 .group-profile-members-heading small { margin-left: auto; color: #8293a6; font-size: 12px; }
@@ -462,8 +463,8 @@ body.milly-dark .group-edit-field textarea { color: #dce4ec; background: #1a2026
 body.milly-dark .group-edit-field textarea:hover { border-color: #526170; }
 body.milly-dark .group-edit-field textarea:focus, body.milly-dark .group-edit-field textarea:focus-visible { border-color: #526f88; outline: none; box-shadow: 0 0 0 2px #82b8e21b; }
 body.milly-dark .group-edit-field textarea::placeholder { color: #9aa8b6; }
-body.milly-dark .group-member-search { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
-body.milly-dark .group-member-search:focus { border-color: #526f88; box-shadow: 0 0 0 2px #82b8e21b; }
+body.milly-dark .group-member-search { color: #dce4ec; background: #222930; border: 0; box-shadow: none; }
+body.milly-dark .group-member-search:focus { border: 0; outline: none; box-shadow: none; }
 body.milly-dark .group-edit-field input:hover { border-color: #526170; }
 body.milly-dark .group-edit-field input:focus, body.milly-dark .group-edit-field input:focus-visible { border-color: #526f88; outline: none; box-shadow: 0 0 0 2px #82b8e21b; }
 body.milly-dark .group-edit-modal .form-kicker, body.milly-dark .group-create-modal .form-kicker { color: #9cccf0; }
