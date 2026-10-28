@@ -67,7 +67,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .mine .message-meta svg { color: #4a9bd9; }
 .message-day-divider { display: flex; align-items: center; justify-content: center; margin: 19px 0 9px; color: #7d8794; font-size: 12px; }
 .message-day-divider::before, .message-day-divider::after { display: none; }
-.message-day-divider>span { padding: 6px 17px; background: #e7e9ed; border-radius: 999px; font-weight: 600; line-height: 1.2; }
+.message-day-divider>span { padding: 6px 17px; background: #fff; border: 1px solid #e3eaf1; border-radius: 999px; box-shadow: 0 2px 6px #2949670a; font-weight: 600; line-height: 1.2; }
 .message-image { background: #f2f7fc; border-color: #dae6f1; }
 .begin-icon { color: #4293d3; background: #e9f5ff; border-color: #cfe7fb; }
 .chat-begin h2 { color: #29415d; }
@@ -171,7 +171,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-hero .avatar { z-index: 0; flex-basis: 74px; width: 74px; height: 74px; margin-bottom: 10px; border: 3px solid #eaf5ff; box-shadow: 0 3px 12px #254d6a30; }
 .profile-sidebar-hero>strong { display: flex; align-items: center; color: #2e435b; font-size: 17px; font-weight: 700; }
 .profile-sidebar-hero>span:not(.profile-status):not(.avatar) { margin-top: 5px; color: #398dd1; font-size: 14px; }
-.profile-sidebar-hero .profile-status { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: #8392a5; font-size: 12px; }
+.profile-sidebar-hero .profile-status { display: flex; align-items: center; gap: 7px; margin-top: 5px; color: #8392a5; font-size: 12px; }
 .profile-status i { width: 7px; height: 7px; background: #a5b0bc; border-radius: 50%; }
 .profile-status.online { color: #42996e; }
 .profile-status.online i { background: #55b482; }
@@ -186,11 +186,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-actions .danger-button { color: #b75c67; background: #fff3f4; border-color: #f3dfe1; }
 .profile-sidebar-actions .primary-button.danger-button { color: #263545; background: #edf1f4; border: 1px solid #e8edf1; box-shadow: none; }
 .profile-sidebar-actions .primary-button.danger-button:hover:not(:disabled) { color: #1e2b38; background: #e3e8ec; transform: none; }
-.verified-badge { display: inline-grid; flex: none; width: 18px; height: 18px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; border-radius: 50%; vertical-align: middle; }
+.verified-badge { display: inline-grid; flex: none; width: 18px; height: 18px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; clip-path: polygon(50% 0%, 64% 15%, 85% 15%, 85% 36%, 100% 50%, 85% 64%, 85% 85%, 64% 85%, 50% 100%, 36% 85%, 15% 85%, 15% 64%, 0% 50%, 15% 36%, 15% 15%, 36% 15%); vertical-align: middle; }
 .verified-badge svg { display: block; width: 10px; height: 10px; color: #fff; stroke: currentColor; }
 .chat-person .verified-badge { color: #fff; }
-.profile-sidebar-hero .verified-badge, .chat-info-banner-identity .verified-badge { width: 16px; height: 16px; background: #2298f5; border-radius: 0; clip-path: polygon(50% 0%, 62% 12%, 79% 7%, 86% 23%, 100% 32%, 94% 50%, 100% 68%, 86% 77%, 79% 93%, 62% 88%, 50% 100%, 38% 88%, 21% 93%, 14% 77%, 0% 68%, 6% 50%, 0% 32%, 14% 23%, 21% 7%, 38% 12%); }
-.profile-sidebar-hero .verified-badge svg, .chat-info-banner-identity .verified-badge svg { width: 9px; height: 9px; }
 .chat-info-banner { display: flex; align-items: stretch; align-self: center; width: min(100%, 500px); flex-direction: column; margin: 0 auto 17px; padding: 20px; color: #52677e; background: #fff; border: 1px solid #e1ebf5; border-radius: 17px; box-shadow: 0 5px 18px #3355760a; }
 .chat-info-banner-identity { display: flex; align-items: center; flex-direction: column; gap: 8px; padding-bottom: 14px; }
 .chat-info-banner-identity .avatar { flex-basis: 76px; width: 76px; height: 76px; border: 3px solid #eaf5ff; box-shadow: 0 3px 12px #254d6a24; }
@@ -269,6 +267,7 @@ body.milly-dark .mine .message-bubble { color: #e4f2ff; background: #2b4962; bor
 body.milly-dark .message-delete-button { color: #a7b3be; background: #293139; border-color: #3c4852; }
 body.milly-dark .message-delete-button:hover { color: #fff; background: #a8515b; border-color: #a8515b; }
 body.milly-dark .message-day-divider { color: #a0adbb; }
+body.milly-dark .message-day-divider>span { color: #dce4ec; background: #222930; border-color: #36414c; box-shadow: none; }
 body.milly-dark .message-day-divider::before, body.milly-dark .message-day-divider::after { background: #35404b; }
 body.milly-dark .composer textarea { color: #dce5ed; }
 body.milly-dark .my-id, body.milly-dark .request-row, body.milly-dark .profile-info-icon { color: #c4d2e0; background: #2a333c; border-color: #39434d; }
@@ -287,7 +286,6 @@ body.milly-dark .chat-info-banner-details>div { border-color: #343e48; }
 body.milly-dark .chat-info-banner-details>div>span, body.milly-dark .chat-info-banner-bio, body.milly-dark .profile-bio { color: #a0adbb; }
 body.milly-dark .chat-info-banner-details .chat-info-positive { color: #76b8ec; }
 body.milly-dark .chat-info-banner-details>div:last-child strong.chat-info-positive { color: #62c88e; }
-body.milly-dark .chat-info-banner-identity .verified-badge, body.milly-dark .profile-sidebar-hero .verified-badge { color: #fff; }
 body.milly-dark .friend-suggestion { color: #dce4ec; background: #222930; border-color: #36414c; }
 body.milly-dark .friend-suggestion:hover { background: #2b3640; border-color: #456078; }
 body.milly-dark .friend-suggestion-copy span { color: #a0adbb; }
