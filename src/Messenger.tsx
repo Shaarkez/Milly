@@ -120,6 +120,7 @@ export default function Messenger() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<Message[]>([])
   const signedImageUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
+  const signedAvatarUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
@@ -250,9 +251,11 @@ export default function Messenger() {
     let cancelled = false
     let accountRefresh: number | undefined
     let refreshInProgress = false
+    let refreshQueued = false
+    let forceAvatarRefreshQueued = false
     let retryDelay = 3000
     setOwnAvatar('')
-    const loadAccount = async () => {
+    const loadAccount = async (forceAvatarRefresh = false) => {
       const [{ data: own, error: ownError }, { data: links, error: linksError }, { data: requestRows, error: requestError }, { data: convoRows, error: convoError }] = await Promise.all([
         client.from('profiles').select('id,milly_id,user_number,username,display_name,avatar_path,is_verified,registration_date_override,created_at').eq('id', user.id).single(),
         client.from('friendships').select('user_low,user_high').or(`user_low.eq.${user.id},user_high.eq.${user.id}`),
@@ -266,10 +269,18 @@ export default function Messenger() {
       if (ownAliasesError) throw ownAliasesError
       setProfile({ ...own, aliases: (ownAliases ?? []).map((alias: { username: string }) => alias.username) } as Profile)
       if (own?.avatar_path) {
-        const { data, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(own.avatar_path, 3600)
-        if (cancelled) return
-        if (avatarError) setError(readableError(avatarError))
-        setOwnAvatar(data?.signedUrl ?? '')
+        const cached = signedAvatarUrls.current.get(own.avatar_path)
+        if (!forceAvatarRefresh && cached && cached.expiresAt > Date.now() + 60_000) {
+          setOwnAvatar(cached.url)
+        } else {
+          const { data, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(own.avatar_path, 3600)
+          if (cancelled) return
+          if (avatarError) setError(readableError(avatarError))
+          if (data?.signedUrl) {
+            signedAvatarUrls.current.set(own.avatar_path, { url: data.signedUrl, expiresAt: Date.now() + 3600_000 })
+          }
+          setOwnAvatar(data?.signedUrl ?? '')
+        }
       } else {
         setOwnAvatar('')
       }
@@ -286,14 +297,23 @@ export default function Messenger() {
       const aliasesById = new Map<string, string[]>()
       for (const alias of aliases ?? []) aliasesById.set(alias.user_id, [...(aliasesById.get(alias.user_id) ?? []), alias.username])
       const avatarPaths = [...new Set((people ?? []).map((person: Profile) => person.avatar_path).filter((path): path is string => Boolean(path)))]
-      const { data: signedAvatars, error: avatarError } = avatarPaths.length
-        ? await client.storage.from('milly-avatars').createSignedUrls(avatarPaths, 3600)
+      const now = Date.now()
+      const validCachedAvatars = new Map([...signedAvatarUrls.current]
+        .filter(([, cached]) => cached.expiresAt > now + 60_000)
+        .map(([path, cached]) => [path, cached.url]))
+      const pathsToSign = forceAvatarRefresh
+        ? avatarPaths
+        : avatarPaths.filter((path) => !validCachedAvatars.has(path))
+      const { data: signedAvatars, error: avatarError } = pathsToSign.length
+        ? await client.storage.from('milly-avatars').createSignedUrls(pathsToSign, 3600)
         : { data: [], error: null }
       if (cancelled) return
       if (avatarError) throw avatarError
-      const avatarUrls = new Map((signedAvatars ?? [])
+      const freshAvatarUrls = new Map((signedAvatars ?? [])
         .filter((signed) => signed.path && signed.signedUrl && !signed.error)
         .map((signed) => [signed.path!, signed.signedUrl!]))
+      for (const [path, url] of freshAvatarUrls) signedAvatarUrls.current.set(path, { url, expiresAt: now + 3600_000 })
+      const avatarUrls = new Map([...validCachedAvatars, ...freshAvatarUrls])
       for (const signed of signedAvatars ?? []) {
         if (signed.error) setError(`Не удалось загрузить аватар ${signed.path ?? ''}: ${signed.error}`)
       }
@@ -316,13 +336,27 @@ export default function Messenger() {
       }
       if (!cancelled) setConversations(chats.sort((a: Conversation, b: Conversation) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
     }
-    const refreshAccount = async () => {
-      if (cancelled || refreshInProgress) return
+    const refreshAccount = async (forceAvatarRefresh = false) => {
+      if (cancelled) return
+      if (refreshInProgress) {
+        refreshQueued = true
+        forceAvatarRefreshQueued ||= forceAvatarRefresh
+        return
+      }
       refreshInProgress = true
       try {
-        await loadAccount()
-      } catch (caught) {
-        if (!cancelled) setError(readableError(caught))
+        let forceNextRefresh = forceAvatarRefresh
+        do {
+          refreshQueued = false
+          forceNextRefresh ||= forceAvatarRefreshQueued
+          forceAvatarRefreshQueued = false
+          try {
+            await loadAccount(forceNextRefresh)
+          } catch (caught) {
+            if (!cancelled) setError(readableError(caught))
+          }
+          forceNextRefresh = false
+        } while (refreshQueued && !cancelled)
       } finally {
         refreshInProgress = false
       }
@@ -340,7 +374,7 @@ export default function Messenger() {
         scheduleAccountFallback()
       }, retryDelay)
     }
-    const avatarRefresh = window.setInterval(() => { void refreshAccount() }, 45 * 60 * 1000)
+    const avatarRefresh = window.setInterval(() => { void refreshAccount(true) }, 45 * 60 * 1000)
     void refreshAccount()
     const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
