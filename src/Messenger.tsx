@@ -15,10 +15,24 @@ const AdminWorkspace = lazy(() => import('./AdminWorkspace'))
 const ADMIN_USER_ID = '6a3ecd6f-7f0a-424a-a02d-ef133f23003a'
 const MESSAGE_REACTIONS = ['❤️', '👍', '🔥'] as const
 const colors = ['#6d8371', '#8b6a5f', '#687c91', '#927b4e', '#806d88']
+const conversationCacheKey = (userId: string) => `milly-conversations:${userId}`
 const initials = (name: string) => name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
 const clock = (value: string) => new Intl.DateTimeFormat('ru', { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 const displayDate = (value: string) => new Date(value).toDateString() === new Date().toDateString() ? clock(value) : new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'short' }).format(new Date(value))
 const profileDate = (value: string) => value && !Number.isNaN(new Date(value).getTime()) ? new Intl.DateTimeFormat('ru', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(value)) : 'Не указана'
+function isCachedConversation(value: unknown): value is Conversation {
+  if (!value || typeof value !== 'object') return false
+  const row = value as Record<string, unknown>
+  const peer = row.peer
+  if (typeof row.id !== 'string' || typeof row.user_low !== 'string' || typeof row.user_high !== 'string' || typeof row.updated_at !== 'string' || !peer || typeof peer !== 'object') return false
+  const person = peer as Record<string, unknown>
+  if (typeof person.id !== 'string' || typeof person.username !== 'string' || typeof person.display_name !== 'string' || typeof person.milly_id !== 'string' || typeof person.user_number !== 'number' || (person.avatar_path !== null && typeof person.avatar_path !== 'string')) return false
+  const message = row.lastMessage
+  if (message === undefined) return true
+  if (!message || typeof message !== 'object') return false
+  const latest = message as Record<string, unknown>
+  return typeof latest.id === 'string' && typeof latest.conversation_id === 'string' && typeof latest.sender_id === 'string' && typeof latest.created_at === 'string' && (latest.body === null || typeof latest.body === 'string') && (latest.image_path === null || typeof latest.image_path === 'string')
+}
 const dayLabel = (value: string) => {
   const date = new Date(value)
   const current = new Date()
@@ -108,7 +122,7 @@ export default function Messenger() {
   const [deletingMessage, setDeletingMessage] = useState(false)
   const [friendBusy, setFriendBusy] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
-  const [profileDraft, setProfileDraft] = useState({ displayName: '', username: '', bio: '' })
+  const [profileDraft, setProfileDraft] = useState({ username: '' })
   const [notice, setNotice] = useState('')
   const [copiedUsernameNotice, setCopiedUsernameNotice] = useState(false)
   const [error, setError] = useState('')
@@ -155,6 +169,7 @@ export default function Messenger() {
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const callTimeout = useRef<number | undefined>(undefined)
   const friendsRef = useRef<Profile[]>([])
+  const cachedConversationsUser = useRef<string | null>(null)
   const client = supabase
   const user = session?.user
   const friendIdsKey = friends.map((friend) => friend.id).sort().join(',')
@@ -176,7 +191,56 @@ export default function Messenger() {
     }
     setMessageActions(null)
     setActive(conversation)
+    setProfileToView(conversation.peer)
   }
+
+  function hydrateConversationCache(userId: string) {
+    if (cachedConversationsUser.current === userId) return
+    cachedConversationsUser.current = userId
+    try {
+      const serialized = localStorage.getItem(conversationCacheKey(userId))
+      if (serialized === null) {
+        setConversations([])
+        setAccountLoaded(false)
+        return
+      }
+      const parsed: unknown = JSON.parse(serialized)
+      if (!Array.isArray(parsed) || !parsed.every(isCachedConversation)) throw new Error('Сохранённый список чатов повреждён.')
+      const cached = parsed.map((conversation) => ({
+        ...conversation,
+        peer: { ...conversation.peer, avatar_url: undefined },
+        lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
+      }))
+      setConversations(cached)
+      setAccountLoaded(true)
+    } catch (caught) {
+      setConversations([])
+      setAccountLoaded(false)
+      setError(`Не удалось восстановить сохранённые чаты: ${readableError(caught)}`)
+    }
+  }
+
+  useEffect(() => {
+    if (!user || !accountLoaded || cachedConversationsUser.current !== user.id) return
+    try {
+      const cached = conversations.map((conversation) => ({
+        ...conversation,
+        peer: { ...conversation.peer, avatar_url: undefined },
+        lastMessage: conversation.lastMessage ? { ...conversation.lastMessage, image_url: undefined } : undefined,
+      }))
+      localStorage.setItem(conversationCacheKey(user.id), JSON.stringify(cached))
+    } catch (caught) {
+      setError(`Не удалось сохранить список чатов на этом устройстве: ${readableError(caught)}`)
+    }
+  }, [accountLoaded, conversations, user?.id])
+
+  useEffect(() => {
+    if (!active) return
+    const latest = conversations.find((conversation) => conversation.id === active.id)
+    if (!latest) return
+    if (active !== latest) setActive(latest)
+    if (profilePanelOpen && profileToView?.id === latest.peer.id && profileToView !== latest.peer) setProfileToView(latest.peer)
+  }, [active, conversations, profilePanelOpen, profileToView])
 
   useEffect(() => () => {
     void ringtoneContext.current?.close()
@@ -255,15 +319,24 @@ export default function Messenger() {
     const emailConfirmedRedirect = new URLSearchParams(window.location.search).get('email_confirmed') === '1'
     client.auth.getSession().then(({ data, error: failure }) => {
       if (failure) setError(readableError(failure))
+      if (data.session) hydrateConversationCache(data.session.user.id)
       setSession(data.session)
       if (emailConfirmedRedirect) setNotice('Электронная почта подтверждена. Добро пожаловать в Milly!')
       setAuthLoading(false)
     })
     const { data: listener } = client.auth.onAuthStateChange((event, nextSession) => {
+      if (nextSession) hydrateConversationCache(nextSession.user.id)
       setSession(nextSession)
       if (event === 'SIGNED_IN') setOwnAvatar('')
       if (event === 'SIGNED_IN' && emailConfirmedRedirect) setNotice('Электронная почта подтверждена. Добро пожаловать в Milly!')
-      if (!nextSession) { setAccountLoaded(false); messageCache.current.clear(); setMessages([]); setMessageReactions({}); setMessageActions(null); setEditingMessage(null); setProfile(null); setOwnAvatar(''); setFriends([]); setRequests([]); setOutgoingRequestIds(new Set()); setConversations([]); setActive(null) }
+      if (!nextSession) {
+        if (cachedConversationsUser.current) {
+          try { localStorage.removeItem(conversationCacheKey(cachedConversationsUser.current)) }
+          catch (caught) { setError(`Не удалось удалить локальный кэш чатов: ${readableError(caught)}`) }
+        }
+        cachedConversationsUser.current = null
+        setAccountLoaded(false); messageCache.current.clear(); setMessages([]); setMessageReactions({}); setMessageActions(null); setEditingMessage(null); setProfile(null); setOwnAvatar(''); setFriends([]); setRequests([]); setOutgoingRequestIds(new Set()); setConversations([]); setActive(null); setProfileToView(null); setProfilePanelOpen(false)
+      }
     })
     return () => listener.subscription.unsubscribe()
   }, [client])
@@ -1577,21 +1650,24 @@ export default function Messenger() {
     setProfile({ ...profile, avatar_path: path }); const { data } = await client.storage.from('milly-avatars').createSignedUrl(path, 3600); setOwnAvatar(data?.signedUrl ?? ''); setNotice('Фотография профиля обновлена.')
   }
 
-  async function saveName(event: FormEvent) {
+  async function saveUsername(event: FormEvent) {
     event.preventDefault()
     if (!client || !user || !profile || profileSaving) return
     const formData = new FormData(event.currentTarget as HTMLFormElement)
-    const name = formData.get('display_name')?.toString().trim()
-    if (!name || name.length > 40) { setError('Имя должно содержать от 1 до 40 символов.'); return }
     try {
       setProfileSaving(true)
       const username = usernameSchema.parse(formData.get('username')?.toString() ?? '')
-      const bio = formData.get('bio')?.toString().trim() ?? ''
-      if (bio.length > 160) throw new Error('Описание профиля должно быть не длиннее 160 символов.')
-      const { error: failure } = await client.from('profiles').update({ display_name: name, username, bio }).eq('id', user.id)
+      const { error: failure } = await client.from('profiles').update({ username }).eq('id', user.id)
       if (failure?.code === '23505') throw new Error('Этот юзернейм уже занят.')
       if (failure) throw failure
-      setProfile({ ...profile, display_name: name, username, bio }); setProfileDraft({ displayName: name, username, bio }); setNotice('Профиль сохранён.')
+      const updatedProfile = { ...profile, username }
+      setProfile(updatedProfile)
+      setProfileDraft({ username })
+      setFriends((current) => current.map((friend) => friend.id === user.id ? updatedProfile : friend))
+      setConversations((current) => current.map((conversation) => conversation.peer.id === user.id ? { ...conversation, peer: updatedProfile } : conversation))
+      setActive((current) => current?.peer.id === user.id ? { ...current, peer: updatedProfile } : current)
+      setProfileToView((current) => current?.id === user.id ? updatedProfile : current)
+      setNotice('Юзернейм сохранён.')
     } catch (caught) { setError(readableError(caught)) }
     finally { setProfileSaving(false) }
   }
@@ -1625,7 +1701,7 @@ export default function Messenger() {
         : 'Добавьте в контакты для статуса'
   return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}${section === 'admin' ? ' admin-mode' : ''}`}><aside className="sidebar">
     <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти чаты и людей" aria-label="Найти чаты и людей" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button></div></div>
-    {presenceUnknown.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
+    {presenceFallbackFriends.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
     <label className="search-box"><Search size={15} /><input placeholder="Поиск людей и чатов" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
     <div className="sidebar-section-heading"><span>{section === 'admin' ? 'УПРАВЛЕНИЕ' : search.trim() ? 'ПОИСК' : 'СООБЩЕНИЯ'}</span></div>
     {section === 'chats' ? <div className="contact-list">
@@ -1637,7 +1713,7 @@ export default function Messenger() {
       {!search.trim() && !visibleChats.length && !requests.length && !accountLoaded && <div className="account-list-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговоры…</div>}
       {!search.trim() && !visibleChats.length && !requests.length && accountLoaded && <EmptyList icon={<MessageCircle size={17} />} title="Разговоров пока нет" action="Найти человека" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()} />}
     </div> : null}
-    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ displayName: profile.display_name, username: profile.username, bio: profile.bio ?? '' }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
+    <div className="sidebar-bottom">{installPrompt && <button className="install-button" onClick={() => void installPrompt.prompt?.()}>Установить Milly</button>}<div className="account-menu-anchor" ref={accountMenuRef}><button className={`profile-control${accountMenuOpen ? ' menu-open' : ''}`} aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span className="contact-copy"><span className="contact-name">{profile?.display_name ?? 'Профиль'}{profile?.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</span><span className="contact-preview">{profile ? `@${profile.username}` : 'Настроить профиль'}</span></span><MoreHorizontal size={17} /></button>{accountMenuOpen && <div className="account-menu" role="menu"><div className="account-menu-heading"><Avatar name={profile?.display_name ?? 'M'} image={ownAvatar} onImageError={profile?.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profile?.display_name ?? 'Аккаунт'}</strong><small>@{profile?.username ?? '—'}</small></span></div><button role="menuitem" onClick={() => { setAccountMenuOpen(false); if (profile) setProfileDraft({ username: profile.username }); setDialog('profile') }}><Settings2 size={16} /> Профиль и настройки</button><button role="menuitem" onClick={() => { setAccountMenuOpen(false); setAppearanceOpen(true) }}><SlidersHorizontal size={16} /> Оформление</button>{profile?.id === ADMIN_USER_ID && <button role="menuitem" onClick={() => { setAccountMenuOpen(false); setSection('admin') }}><ShieldCheck size={16} /> Администрирование</button>}<button className="account-menu-signout" role="menuitem" onClick={() => { setAccountMenuOpen(false); void finishCall(false); void client?.auth.signOut() }}><LogOut size={16} /> Выйти из аккаунта</button></div>}</div></div>
   </aside>
 
   <section className="chat-pane">{section === 'admin' && client ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем панель…</div>}><AdminWorkspace client={client} onExit={() => setSection('chats')} /> </Suspense> : active && peer ? <>
@@ -1716,7 +1792,7 @@ export default function Messenger() {
     </section>
   </div>}
   {(error || notice) && user?.id === ADMIN_USER_ID && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
-  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>@{profile.username}</span>{profile.bio && <small className="profile-bio">{profile.bio}</small>}{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><div className="my-id"><span>ЮЗЕРНЕЙМ</span><strong>@{profile.username}</strong><button className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></div></div><form className="profile-edit" onSubmit={(event) => void saveName(event)}><div className="profile-section-title">Редактор профиля</div><div className="profile-editor-preview"><Avatar name={profileDraft.displayName || profile.display_name} image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><strong>{profileDraft.displayName || profile.display_name}</strong><small>@{profileDraft.username || profile.username}</small></span></div><label>Имя<input name="display_name" value={profileDraft.displayName} onChange={(event) => setProfileDraft((draft) => ({ ...draft, displayName: event.target.value }))} maxLength={40} required /></label><label>Username<input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft((draft) => ({ ...draft, username: event.target.value }))} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></label><label>Описание профиля<textarea name="bio" value={profileDraft.bio} onChange={(event) => setProfileDraft((draft) => ({ ...draft, bio: event.target.value }))} maxLength={160} rows={3} placeholder="Пара слов о себе" /></label><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ displayName: profile.display_name, username: profile.username, bio: profile.bio ?? '' }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
+  {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setDialog(null) }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title"><div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setDialog(null)}><X size={18} /></button></div><div className="profile-cover"><span className="profile-cover-orbit" /><button className="photo-button profile-photo-button" title="Изменить фотографию" onClick={() => avatarRef.current?.click()}><Avatar name={profile.display_name} large image={ownAvatar} onImageError={profile.avatar_path ? () => void refreshAvatar(profile.avatar_path!) : undefined} /><span><ImagePlus size={14} /></span></button><input ref={avatarRef} type="file" accept="image/*" hidden onChange={(event) => { void uploadAvatar(event.target.files?.[0]); event.target.value = '' }} /></div><div className="profile-identity"><strong>{profile.display_name}{profile.is_verified && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>@{profile.username}</span>{Boolean(profile.aliases?.length) && <small className="profile-aliases">Также: {profile.aliases?.map((alias) => `@${alias}`).join(', ')}</small>}{profile.registration_date_override && <small className="profile-date">В Milly с {profileDate(profile.registration_date_override)}</small>}<small><i /> Аккаунт Milly</small></div><form className="profile-edit" onSubmit={(event) => void saveUsername(event)}><div className="profile-identifiers"><div className="my-id"><span>СТАТИЧЕСКИЙ ID</span><strong>#{profile.user_number}</strong><button type="button" className="icon-button" title="Скопировать ID" aria-label="Скопировать ID" onClick={() => void copyId()}><Copy size={16} /></button></div><label className="my-id username-edit-row"><span>ЮЗЕРНЕЙМ</span><span className="username-edit-field"><span>@</span><input name="username" value={profileDraft.username} onChange={(event) => setProfileDraft({ username: event.target.value })} minLength={3} maxLength={24} pattern="[a-zA-Z0-9_]+" autoCapitalize="off" autoComplete="off" spellCheck={false} required /></span><button type="button" className="icon-button" title="Скопировать юзернейм" aria-label="Скопировать юзернейм" onClick={() => void copyUsername()}><Copy size={16} /></button></label></div><div className="profile-editor-actions"><button className="primary-button" disabled={profileSaving}>{profileSaving ? <LoaderCircle className="spin" size={15} /> : null}Сохранить</button><button type="button" className="secondary-button" disabled={profileSaving} onClick={() => { setProfileDraft({ username: profile.username }); setDialog(null) }}>Отменить</button></div></form><button className="signout-button" onClick={() => { void finishCall(false); void client?.auth.signOut(); setDialog(null) }}><LogOut size={16} /> Выйти из аккаунта</button></section></div>}
   {friendToRemove && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !friendBusy) setFriendToRemove(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-friend-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="remove-friend-title">Удалить из друзей?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={friendBusy} onClick={() => setFriendToRemove(null)}><X size={18} /></button></div><p>{friendToRemove.display_name} исчезнет из списка друзей. История переписки останется.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={friendBusy} onClick={() => setFriendToRemove(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={friendBusy} onClick={() => void removeFriend(friendToRemove)}>{friendBusy ? <LoaderCircle className="spin" size={16} /> : null}Удалить из друзей</button></div></section></div>}
   {messageToDelete && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingMessage) setMessageToDelete(null) }}><section className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-message-title"><div className="modal-heading"><div><span className="form-kicker">ПОДТВЕРЖДЕНИЕ</span><h2 id="delete-message-title">Удалить сообщение?</h2></div><button className="icon-button" aria-label="Закрыть" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}><X size={18} /></button></div><p>Сообщение будет удалено у вас и у собеседника. Это действие нельзя отменить.</p><div className="confirm-actions"><button type="button" className="secondary-button" disabled={deletingMessage} onClick={() => setMessageToDelete(null)}>Отмена</button><button type="button" className="primary-button danger-button" disabled={deletingMessage} onClick={() => void deleteMessage(messageToDelete)}>{deletingMessage && <LoaderCircle className="spin" size={16} />}Удалить сообщение</button></div></section></div>}
   {appearanceOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setAppearanceOpen(false) }}><section className="modal appearance-modal" role="dialog" aria-modal="true" aria-labelledby="appearance-title"><div className="modal-heading"><div><span className="form-kicker">НАСТРОЙКИ</span><h2 id="appearance-title">Оформление</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => setAppearanceOpen(false)}><X size={18} /></button></div><p>Выберите тему для Milly. Настройка сохраняется на этом устройстве.</p><button className={`theme-option${lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(true)}><span className="theme-preview theme-preview-light" /><span><strong>Светло-голубая</strong><small>Светлый фон и голубые акценты</small></span><span className="theme-radio" /></button><button className={`theme-option${!lightTheme ? ' selected' : ''}`} onClick={() => setLightTheme(false)}><span className="theme-preview theme-preview-dark" /><span><strong>Тёмная</strong><small>Спокойные тёмные поверхности</small></span><span className="theme-radio" /></button></section></div>}

@@ -358,7 +358,8 @@ main .call-overlay .call-card {
 
 .profile-cover {
   position: relative;
-  height: 142px;
+  height: 150px;
+  min-height: 150px;
   margin: -5px -5px 0;
   overflow: visible;
   background:
