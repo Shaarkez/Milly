@@ -19,6 +19,7 @@ body {
 }
 
 .message-row.group-start,
+.message-row.group-single,
 .message-row.mine.group-start {
   margin-top: 8px;
 }
@@ -29,6 +30,37 @@ body {
 
 .message-row {
   align-items: flex-start;
+}
+
+.message-row .message-bubble {
+  padding: 7px 11px;
+  line-height: 1.45;
+}
+
+.message-row.group-single .message-bubble,
+.message-row.group-start .message-bubble {
+  border-radius: 17px 6px 11px 12px;
+}
+
+.message-row.group-middle .message-bubble {
+  border-radius: 10px 8px 10px 12px;
+}
+
+.message-row.group-end .message-bubble {
+  border-radius: 6px 8px 1px 12px;
+}
+
+.message-row.mine.group-single .message-bubble,
+.message-row.mine.group-start .message-bubble {
+  border-radius: 6px 17px 12px 11px;
+}
+
+.message-row.mine.group-middle .message-bubble {
+  border-radius: 8px 10px 12px 10px;
+}
+
+.message-row.mine.group-end .message-bubble {
+  border-radius: 8px 6px 12px 1px;
 }
 
 .messenger-shell {
