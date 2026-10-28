@@ -24,7 +24,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .brand-dot { color: #5da8e9; }
 .search-box { color: #8292a8; background: #f5f8fc; border-color: #e6edf5; border-radius: 10px; }
 .search-box:focus-within { border-color: #d3deea; box-shadow: none; }
-.search-box input { color: #263b55; }
+.search-box input { color: #263b55; font-size: 14px; outline: none; }
 .search-box input::placeholder, .search-box kbd { color: #9aa8b8; }
 .search-box kbd { border-color: #e0e8f1; }
 .sidebar-section-heading { color: #92a0b2; }
@@ -72,9 +72,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .chat-begin h2 { color: #29415d; }
 .chat-begin p { color: #7e8da1; }
 .composer { background: #fff; border-color: #dde8f2; border-radius: 13px; box-shadow: 0 8px 25px #31527012; }
-.composer:focus-within { border-color: #83bff0; box-shadow: 0 0 0 3px #85c2f01b, 0 8px 25px #31527012; }
+.composer:focus-within { border-color: #dde8f2; box-shadow: 0 8px 25px #31527012; }
 .composer { align-items: center; }
-.composer textarea { color: #273d56; font-size: 15px; }
+.composer textarea { color: #273d56; font-size: 15px; outline: none; }
 .composer textarea::placeholder { color: #9ba9b9; }
 .composer .icon-button, .composer .attach-button { color: #438fc9; }
 .composer .icon-button:hover { color: #2679bf; background: #edf6ff; }
@@ -183,8 +183,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline-colo
 .profile-sidebar-actions .danger-button { color: #b75c67; background: #fff3f4; border-color: #f3dfe1; }
 .primary-button.danger-button { color: #fff; background: linear-gradient(135deg, #67b4f1, #4a9be0); }
 .primary-button.danger-button:hover:not(:disabled) { background: linear-gradient(135deg, #55a8eb, #398bd2); }
-.verified-badge { display: inline-grid; flex: none; width: 22px; height: 22px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; border-radius: 50%; vertical-align: middle; }
-.verified-badge svg { display: block; }
+.verified-badge { display: inline-grid; flex: none; width: 18px; height: 18px; margin-left: 6px; place-items: center; color: #fff; background: #2298f5; border-radius: 50%; vertical-align: middle; }
+.verified-badge svg { display: block; width: 10px; height: 10px; color: #fff; stroke: currentColor; }
+.chat-person .verified-badge { color: #fff; }
 .chat-info-banner { display: flex; align-items: center; align-self: center; width: min(100%, 500px); gap: 14px; margin: 0 auto 17px; padding: 15px 18px; color: #52677e; background: #fff; border: 1px solid #e1ebf5; border-radius: 15px; box-shadow: 0 5px 18px #3355760a; }
 .chat-info-banner>div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .chat-info-banner strong { color: #2c435d; font-size: 14px; }
@@ -275,6 +276,7 @@ body.milly-dark .chat-info-banner>div>span, body.milly-dark .chat-info-banner sm
 body.milly-dark .chat-info-banner p { color: #c4d0dc; }
 body.milly-dark .account-menu>button.account-menu-signout { color: #dce3eb; }
 body.milly-dark .search-box:focus-within { border-color: #414c57; box-shadow: none; }
+body.milly-dark .composer:focus-within { border-color: #36414c; box-shadow: 0 8px 25px #00000020; }
 body.milly-dark .profile-edit textarea[name="bio"] { color: #dce4ec; background: #1a2026; border-color: #3b4651; }
 body.milly-dark .profile-edit textarea[name="bio"]:focus { border-color: #526274; box-shadow: none; }
 body.milly-dark .composer .send-button { color: #fff; background: linear-gradient(135deg, #4c9fdc, #347eb9); }
@@ -868,4 +870,6 @@ body.milly-dark .setup-card pre {
   .contact-row, .primary-button, .send-button, .call-mini-control, .icon-button, .search-clear {
     transition: none;
   }
+
+  .search-box input:focus-visible, .composer textarea:focus-visible { outline: none; }
 }
