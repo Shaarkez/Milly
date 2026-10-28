@@ -42,7 +42,7 @@ body {
 }
 
 .message-row.group-start .message-bubble {
-  border-radius: 16px;
+  border-radius: 16px 16px 16px 4px;
 }
 
 .message-row.group-middle .message-bubble {
@@ -58,7 +58,7 @@ body {
 }
 
 .message-row.mine.group-start .message-bubble {
-  border-radius: 16px;
+  border-radius: 16px 16px 2px 16px;
 }
 
 .message-row.mine.group-middle .message-bubble {

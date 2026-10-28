@@ -284,12 +284,22 @@ export default function Messenger() {
       if (peopleError || aliasesError) throw peopleError || aliasesError
       const aliasesById = new Map<string, string[]>()
       for (const alias of aliases ?? []) aliasesById.set(alias.user_id, [...(aliasesById.get(alias.user_id) ?? []), alias.username])
-      const profiles = await Promise.all((people ?? []).map(async (row: Profile) => {
-        const person = { ...row, aliases: aliasesById.get(row.id) ?? [] }
-        if (!person.avatar_path) return person
-        const { data: signed, error: avatarError } = await client.storage.from('milly-avatars').createSignedUrl(person.avatar_path, 3600)
-        if (avatarError && !cancelled) setError(`Не удалось загрузить аватар ${person.display_name}: ${readableError(avatarError)}`)
-        return { ...person, avatar_url: signed?.signedUrl }
+      const avatarPaths = [...new Set((people ?? []).map((person: Profile) => person.avatar_path).filter((path): path is string => Boolean(path)))]
+      const { data: signedAvatars, error: avatarError } = avatarPaths.length
+        ? await client.storage.from('milly-avatars').createSignedUrls(avatarPaths, 3600)
+        : { data: [], error: null }
+      if (cancelled) return
+      if (avatarError) throw avatarError
+      const avatarUrls = new Map((signedAvatars ?? [])
+        .filter((signed) => signed.path && signed.signedUrl && !signed.error)
+        .map((signed) => [signed.path!, signed.signedUrl!]))
+      for (const signed of signedAvatars ?? []) {
+        if (signed.error) setError(`Не удалось загрузить аватар ${signed.path ?? ''}: ${signed.error}`)
+      }
+      const profiles = (people ?? []).map((row: Profile) => ({
+        ...row,
+        aliases: aliasesById.get(row.id) ?? [],
+        avatar_url: row.avatar_path ? avatarUrls.get(row.avatar_path) : undefined,
       }))
       if (cancelled) return
       const byId = new Map(profiles.map((person: Profile) => [person.id, person]))
