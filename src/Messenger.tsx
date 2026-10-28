@@ -119,6 +119,7 @@ export default function Messenger() {
   const [installPrompt, setInstallPrompt] = useState<Event & { prompt?: () => Promise<void> } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const messagesRef = useRef<Message[]>([])
+  const signedImageUrls = useRef(new Map<string, { url: string; expiresAt: number }>())
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const avatarRef = useRef<HTMLInputElement>(null)
@@ -533,7 +534,7 @@ export default function Messenger() {
       const currentImages = messagesRef.current.filter((message) => message.conversation_id === active.id && message.image_path)
       if (!currentImages.length) return
       try {
-        const refreshed = await signedImages(currentImages)
+        const refreshed = await signedImages(currentImages, true)
         if (cancelled) return
         const refreshedById = new Map(refreshed.map((message) => [message.id, message]))
         setMessages((current) => current.map((message) => refreshedById.get(message.id) ?? message))
@@ -659,14 +660,31 @@ export default function Messenger() {
     return () => window.clearInterval(timer)
   }, [callPhase])
 
-  async function signedImages(rows: Message[]) {
+  async function signedImages(rows: Message[], forceRefresh = false) {
     if (!client) return rows
-    return Promise.all(rows.map(async (row) => {
+    const now = Date.now()
+    const cachedUrls = new Map([...signedImageUrls.current]
+      .filter(([, cached]) => cached.expiresAt > now + 60_000)
+      .map(([path, cached]) => [path, cached.url]))
+    const paths = [...new Set(rows
+      .filter((row) => row.image_path && (forceRefresh || !cachedUrls.has(row.image_path)))
+      .map((row) => row.image_path!))]
+    const { data, error: signedUrlError } = paths.length
+      ? await client.storage.from('milly-media').createSignedUrls(paths, 3600)
+      : { data: [], error: null }
+    if (signedUrlError) throw signedUrlError
+    const freshUrls = new Map((data ?? [])
+      .filter((signed) => signed.path && signed.signedUrl && !signed.error)
+      .map((signed) => [signed.path!, signed.signedUrl!]))
+    const failed = (data ?? []).find((signed) => signed.error)
+    if (failed?.error) throw new Error(`Не удалось создать ссылку на изображение ${failed.path ?? ''}: ${failed.error}`)
+    for (const [path, url] of freshUrls) signedImageUrls.current.set(path, { url, expiresAt: now + 3600_000 })
+    return rows.map((row) => {
       if (!row.image_path) return row
-      const { data, error: signedUrlError } = await client.storage.from('milly-media').createSignedUrl(row.image_path, 3600)
-      if (signedUrlError) throw signedUrlError
-      return { ...row, image_url: data?.signedUrl }
-    }))
+      const imageUrl = freshUrls.get(row.image_path) ?? cachedUrls.get(row.image_path)
+      if (!imageUrl) throw new Error(`Не удалось получить ссылку на изображение ${row.image_path}.`)
+      return { ...row, image_url: imageUrl }
+    })
   }
 
   async function openChat(friend: Profile) {
