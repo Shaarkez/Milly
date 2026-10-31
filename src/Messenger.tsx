@@ -2386,7 +2386,7 @@ export default function Messenger() {
       <img src={imageToView.url} alt={imageToView.alt} />
     </section>
   </div>}
-  {(error || notice) && user?.id === ADMIN_USER_ID && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
+  {(error || notice) && <div className="toast-stack" aria-live="polite">{error && <Toast message={error} error onClose={() => setError('')} />}{notice && <Toast message={notice} onClose={() => setNotice('')} />}</div>}
   {dialog === 'profile' && profile && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { setDialog(null); setProfileTab('profile') } }}><section className="modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
   <div className="modal-heading"><div><span className="form-kicker">ВАШЕ ПРОСТРАНСТВО</span><h2 id="profile-title">Профиль</h2></div><button className="icon-button" aria-label="Закрыть" onClick={() => { setDialog(null); setProfileTab('profile') }}><X size={18} /></button></div>
   <nav className="profile-tabs" aria-label="Разделы профиля"><button type="button" className={profileTab === 'profile' ? 'active' : ''} onClick={() => setProfileTab('profile')}>Профиль</button><button type="button" className={profileTab === 'security' ? 'active' : ''} onClick={() => { setProfileTab('security'); setSecurityEmail(user?.email ?? '') }}>Безопасность</button></nav>
