@@ -379,6 +379,8 @@ main .call-overlay .call-card {
   border: 1px solid #ffffff17;
   border-radius: 50%;
   box-shadow: 0 0 0 23px #ffffff04, 0 0 0 48px #ffffff04;
+  pointer-events: none;
+  z-index: 0;
 }
 
 .profile-photo-button {
