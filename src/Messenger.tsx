@@ -525,7 +525,7 @@ export default function Messenger() {
           if (data?.signedUrl) {
             signedAvatarUrls.current.set(own.avatar_path, { url: data.signedUrl, expiresAt: Date.now() + 3600_000 })
           }
-          setOwnAvatar(data?.signedUrl ?? '')
+          setOwnAvatar(data?.signedUrl ?? cached?.url ?? '')
         }
       } else {
         setOwnAvatar('')
