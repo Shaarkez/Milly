@@ -14,7 +14,7 @@ type MessageReaction = { id: number; user_id: string; message_id: string; emoji:
 type StoredReaction = { id: number; user_id: string; emoji: string; message_id?: string; group_message_id?: string }
 const AdminWorkspace = lazy(() => import('./AdminWorkspace'))
 const ADMIN_USER_ID = '6a3ecd6f-7f0a-424a-a02d-ef133f23003a'
-const MESSAGE_REACTIONS = ['❤️', '👍', '🔥'] as const
+const MESSAGE_REACTIONS = ['❤️', '👍', '🔥', '😂'] as const
 const colors = ['#6d8371', '#8b6a5f', '#687c91', '#927b4e', '#806d88']
 const conversationCacheKey = (userId: string) => `milly-conversations:${userId}`
 const activeConversationKey = (userId: string) => `milly-active-conversation:${userId}`
@@ -164,6 +164,7 @@ export default function Messenger() {
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReaction[]>>({})
   const [reactionBusy, setReactionBusy] = useState<Set<string>>(new Set())
   const [editingMessage, setEditingMessage] = useState<Message | null>(null)
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [deletingMessage, setDeletingMessage] = useState(false)
   const [friendBusy, setFriendBusy] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
@@ -604,10 +605,10 @@ export default function Messenger() {
       if (chats.length || groupChats.length) {
         const [recent, groupRecent] = await Promise.all([
           chats.length
-            ? client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
+            ? client.from('messages').select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').in('conversation_id', chats.map((row: Conversation) => row.id)).order('created_at', { ascending: false }).limit(200)
             : Promise.resolve({ data: [], error: null }),
           groupChats.length
-            ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').in('group_id', groupChats.map((row) => row.id)).order('created_at', { ascending: false }).limit(200)
+            ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').in('group_id', groupChats.map((row) => row.id)).order('created_at', { ascending: false }).limit(200)
             : Promise.resolve({ data: [], error: null }),
         ])
         if (cancelled) return
@@ -788,7 +789,7 @@ export default function Messenger() {
           : conversation))
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'group_messages', filter: `group_id=eq.${groupId}` }, () => {
-        void client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', groupId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
+        void client.from('group_messages').select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').eq('group_id', groupId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
           .then(({ data, error: failure }) => {
             if (failure) { setError(readableError(failure)); return }
             const latest = data ? { ...data, conversation_id: groupId } as Message : undefined
@@ -990,8 +991,8 @@ export default function Messenger() {
       refreshInProgress = true
       try {
         const { data, error: failure } = active.group
-          ? await client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
-          : await client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
+          ? await client.from('group_messages').select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').eq('group_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
+          : await client.from('messages').select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').eq('conversation_id', active.id).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(pageSize)
         if (cancelled) return
         if (failure) throw failure
         const rows = ((data ?? []) as (Message & { group_id?: string })[]).map((message) => active.group ? { ...message, conversation_id: message.group_id! } : message).reverse()
@@ -1169,7 +1170,7 @@ export default function Messenger() {
         earlyCandidates.delete(signal.call_id)
         setIncomingFrom(friendsRef.current.find((friend) => friend.id === signal.from_uid)?.display_name ?? 'Ваш друг'); setCallMinimized(false); setCallPhase('incoming')
         window.clearTimeout(callTimeout.current)
-        callTimeout.current = window.setTimeout(() => { if (pendingOffer.current?.callId === signal.call_id) { void finishCall(true); setNotice('Входящий звонок пропущен.') } }, 45000)
+        callTimeout.current = window.setTimeout(() => { if (pendingOffer.current?.callId === signal.call_id) { void recordCallSystemMessage('missed_call', signal.from_uid); void finishCall(true); setNotice('Входящий звонок пропущен.') } }, 45000)
       } else if (callRef.current?.id === signal.call_id || pendingOffer.current?.callId === signal.call_id) {
         if (signal.kind === 'answer' && peerConnection.current) {
           await peerConnection.current.setRemoteDescription(signal.payload as RTCSessionDescriptionInit); setCallPhase('connecting')
@@ -1633,14 +1634,14 @@ export default function Messenger() {
     try {
       const { data, error: failure } = active.group
         ? await client.from('group_messages')
-          .select('id,group_id,sender_id,body,image_path,created_at')
+          .select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at')
           .eq('group_id', conversationId)
           .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
           .order('created_at', { ascending: false })
           .order('id', { ascending: false })
           .limit(pageSize)
         : await client.from('messages')
-          .select('id,conversation_id,sender_id,body,image_path,created_at')
+          .select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at')
           .eq('conversation_id', conversationId)
           .or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`)
           .order('created_at', { ascending: false })
@@ -1684,7 +1685,7 @@ export default function Messenger() {
   }
 
   async function openMessageActions(message: Message, event: ReactMouseEvent<HTMLDivElement | HTMLButtonElement>) {
-    if (event.button !== 0) return
+    event.preventDefault()
     event.stopPropagation()
     setMessageActions(message)
     if (!client) return
@@ -1694,6 +1695,38 @@ export default function Messenger() {
     if (failure) { setError(readableError(failure)); return }
     const normalized = normalizeReactions((data ?? []) as StoredReaction[])
     setMessageReactions((current) => ({ ...current, [message.id]: normalized }))
+  }
+
+  function replyToMessage(message: Message) {
+    setReplyingTo(message)
+    setMessageActions(null)
+    composerRef.current?.focus()
+  }
+
+  async function togglePinnedMessage(message: Message) {
+    if (!client || !user || !active) return
+    const shouldPin = !message.pinned_at
+    const pinnedAt = shouldPin ? new Date().toISOString() : null
+    try {
+      const result = active.group
+        ? await client.rpc('pin_group_message', { p_message: message.id, p_pin: shouldPin })
+        : await client.rpc('pin_dm_message', { p_message: message.id, p_pin: shouldPin })
+      if (result.error) throw result.error
+      const updated = { ...message, pinned_at: (result.data as string | null) ?? pinnedAt, pinned_by: shouldPin ? user.id : null }
+      updateConversationMessages(active.id, (current) => current.map((item) => item.id === updated.id ? updated : item))
+      setMessageActions(null)
+      setNotice(shouldPin ? 'Сообщение закреплено.' : 'Сообщение откреплено.')
+    } catch (caught) {
+      setError(readableError(caught))
+    }
+  }
+
+  async function recordCallSystemMessage(kind: 'missed_call' | 'declined_call', peerId: string) {
+    if (!client || !user) return
+    const conversation = await client.rpc('get_or_create_dm', { p_peer: peerId })
+    if (conversation.error || !conversation.data) return
+    const body = kind === 'missed_call' ? 'Пропущенный звонок' : 'Звонок отклонён'
+    await client.from('messages').insert({ conversation_id: conversation.data as string, sender_id: user.id, body, system_kind: kind }).select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').single()
   }
 
   async function toggleReactionForMessage(messageId: string, emoji: string) {
@@ -1790,8 +1823,8 @@ export default function Messenger() {
 
       const [latestResult, storageResult] = await Promise.all([
         isGroup
-          ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,created_at').eq('group_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
-          : client.from('messages').select('id,conversation_id,sender_id,body,image_path,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle(),
+          ? client.from('group_messages').select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').eq('group_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle()
+          : client.from('messages').select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').eq('conversation_id', conversationId).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(1).maybeSingle(),
         message.image_path
           ? client.storage.from('milly-media').remove([message.image_path])
           : Promise.resolve({ error: null }),
@@ -1819,8 +1852,8 @@ export default function Messenger() {
     try {
       if (editingMessage) {
         const { data, error: failure } = active.group
-          ? await client.from('group_messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,group_id,sender_id,body,image_path,created_at').single()
-          : await client.from('messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,conversation_id,sender_id,body,image_path,created_at').single()
+          ? await client.from('group_messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').single()
+          : await client.from('messages').update({ body: text.trim() }).eq('id', editingMessage.id).eq('sender_id', user.id).select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').single()
         if (failure) throw failure
         const rawUpdated = data as Message & { group_id?: string }
         const updated = { ...editingMessage, ...rawUpdated, conversation_id: active.group ? rawUpdated.group_id! : rawUpdated.conversation_id }
@@ -1842,14 +1875,15 @@ export default function Messenger() {
         if (uploadError) throw uploadError
       }
       const { data, error: failure } = active.group
-        ? await client.from('group_messages').insert({ group_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,group_id,sender_id,body,image_path,created_at').single()
-        : await client.from('messages').insert({ conversation_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath }).select('id,conversation_id,sender_id,body,image_path,created_at').single()
+        ? await client.from('group_messages').insert({ group_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath, reply_to_id: replyingTo?.id ?? null }).select('id,group_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').single()
+        : await client.from('messages').insert({ conversation_id: active.id, sender_id: user.id, body: text.trim() || null, image_path: imagePath, reply_to_id: replyingTo?.id ?? null }).select('id,conversation_id,sender_id,body,image_path,reply_to_id,pinned_at,pinned_by,system_kind,created_at').single()
       if (failure) throw failure
       const rawMessage = data as Message & { group_id?: string }
       const [message] = await signedImages([active.group ? { ...rawMessage, conversation_id: rawMessage.group_id! } : rawMessage])
       updateConversationMessages(active.id, (current) => mergeMessages(current, [message]))
       setConversations((current) => current.map((row) => row.id === active.id ? { ...row, lastMessage: message, updated_at: message.created_at } : row).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
       setText('')
+      setReplyingTo(null)
       if (composerRef.current) composerRef.current.style.height = '38px'
       requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }))
     } catch (caught) { setError(readableError(caught)) }
@@ -2041,7 +2075,7 @@ export default function Messenger() {
       const { error: failure } = await client.from('call_signals').insert({ call_id: callId, from_uid: user.id, to_uid: friend.id, kind: 'offer', payload: offer })
       if (failure) throw failure
       window.clearTimeout(callTimeout.current)
-      callTimeout.current = window.setTimeout(() => { if (callRef.current?.id === callId && peerConnection.current?.connectionState !== 'connected') { void finishCall(true); setNotice('Собеседник не ответил.') } }, 45000)
+      callTimeout.current = window.setTimeout(() => { if (callRef.current?.id === callId && peerConnection.current?.connectionState !== 'connected') { void recordCallSystemMessage('missed_call', friend.id); void finishCall(true); setNotice('Собеседник не ответил.') } }, 45000)
     } catch (caught) { await finishCall(false); setError(caught instanceof DOMException && caught.name === 'NotAllowedError' ? withVideo ? 'Разрешите доступ к микрофону и камере в настройках браузера.' : 'Разрешите доступ к микрофону в настройках браузера.' : readableError(caught)) }
   }
 
@@ -2091,7 +2125,10 @@ export default function Messenger() {
 
   async function rejectIncomingCall() {
     const incoming = pendingOffer.current
-    if (client && user && incoming) await client.from('call_signals').insert({ call_id: incoming.callId, from_uid: user.id, to_uid: incoming.from, kind: 'reject', payload: null })
+    if (client && user && incoming) {
+      await client.from('call_signals').insert({ call_id: incoming.callId, from_uid: user.id, to_uid: incoming.from, kind: 'reject', payload: null })
+      await recordCallSystemMessage('declined_call', incoming.from)
+    }
     await finishCall(false)
   }
 
@@ -2217,6 +2254,7 @@ export default function Messenger() {
 
   <section className="chat-pane">{section === 'admin' && client ? <Suspense fallback={<div className="channel-loading app-loading"><LoaderCircle className="spin" size={19} /> Открываем панель…</div>}><AdminWorkspace client={client} onExit={() => setSection('chats')} /> </Suspense> : active && peer ? <>
     <header className="chat-header"><button className="icon-button mobile-back" aria-label="Назад" onClick={() => setActive(null)}><ArrowLeft size={18} /></button><button className="chat-avatar-button" aria-label={active.group ? 'Открыть профиль группы' : 'Открыть профиль'} onClick={() => { if (active.group) setProfilePanelOpen((open) => !open); else { setProfileToView(peer); setProfilePanelOpen(true) } }}><Avatar name={peer.display_name} online={!active.group && online.has(peer.id)} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /></button><button className="chat-person chat-person-button" onClick={() => { if (active.group) setProfilePanelOpen((open) => !open); else { setProfileToView(peer); setProfilePanelOpen((open) => !open) } }}><strong>{peer.display_name}{(active.group ? active.group.is_verified : peer.is_verified) && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong><span>{active.group ? `${active.groupMembers?.length ?? 0} участников` : presenceLabel(peer.id)}</span></button><div className="header-actions">{!active.group && <button className="icon-button call-button" title="Голосовой звонок" aria-label="Голосовой звонок" onClick={() => void startCall(peer)}><Phone size={18} /></button>}</div></header>
+    {(() => { const pinned = messages.find((message) => Boolean(message.pinned_at)); return pinned ? <div className="pinned-message-banner"><div><span>Закреплённое сообщение</span><strong>{pinned.system_kind === 'missed_call' ? 'Пропущенный звонок' : pinned.body || 'Фотография'}</strong></div><button type="button" aria-label="Открепить сообщение" onClick={() => void togglePinnedMessage(pinned)}><X size={16} /></button></div> : null })()}
     <div className="messages-scroll" ref={scrollRef}><div className="chat-info-banner"><div className="chat-info-banner-identity"><Avatar name={peer.display_name} large image={peer.avatar_url} onImageError={peer.avatar_path ? () => void refreshAvatar(peer.avatar_path!) : undefined} /><strong>{peer.display_name}{(active.group ? active.group.is_verified : peer.is_verified) && <span className="verified-badge" aria-label="Подтверждённый аккаунт"><Check size={10} strokeWidth={3} /></span>}</strong></div><div className="chat-info-banner-details">{active.group ? <><div><span>Участники</span><strong>{active.groupMembers?.length ?? 0}</strong></div><div><span>Создатель</span><strong>{active.groupMembers?.find((member) => member.id === active.group?.created_by)?.display_name ?? 'Участник'}</strong></div><div><span>Верификация</span><strong className={active.group.is_verified ? 'chat-info-positive' : ''}>{active.group.is_verified ? 'Есть' : 'Нет'}</strong></div></> : <><div><span>Дата регистрации</span><strong>{profileDate(peer.registration_date_override ?? peer.created_at ?? '')}</strong></div><div><span>Верификация</span><strong className={peer.is_verified ? 'chat-info-positive' : ''}>{peer.is_verified ? 'Есть' : 'Нет'}</strong></div><div><span>В контактах</span><strong className={friends.some((friend) => friend.id === peer.id) ? 'chat-info-positive' : ''}>{friends.some((friend) => friend.id === peer.id) ? 'Да' : 'Нет'}</strong></div></>}</div></div>{loadingMessages && <div className="history-loading"><LoaderCircle className="spin" size={16} /> Загружаем разговор</div>}{hasOlder && !loadingMessages && <button className="older-button" onClick={() => void loadOlder()}>Показать предыдущие сообщения</button>}{messages.length === 0 && !loadingMessages ? <div className="chat-begin"><div className="begin-icon"><MessageCircle size={24} /></div><span>{active.group ? 'ВАШ ГРУППОВОЙ ЧАТ' : 'СЕЙЧАС ВЫ ЗДЕСЬ'}</span><h2>{active.group ? 'Начните разговор.' : <>Начало хорошего<br />разговора.</>}</h2><p>{active.group ? `Напишите участникам группы «${peer.display_name}».` : `Напишите ${peer.display_name}, и это место станет вашим.`}</p></div> : <div className="message-list">{messages.map((message, index) => {
       const mine = message.sender_id === user?.id; const previous = messages[index - 1]
       const groupStart = !previous || !messagesBelongToSameGroup(previous, message)
@@ -2229,13 +2267,13 @@ export default function Messenger() {
       const reactionCounts = [...new Set(reactions.map((reaction) => reaction.emoji))]
       return <Fragment key={message.id}>
         {newDay && <div className="message-day-divider"><span>{dayLabel(message.created_at)}</span></div>}
-        <div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`}>
+        <div className={`message-row${mine ? ' mine' : ''} ${groupPosition}`} data-message-id={message.id}>
           {!mine && groupStart && <Avatar name={author?.display_name ?? peer.display_name} image={author?.avatar_url} onImageError={author?.avatar_path ? () => void refreshAvatar(author.avatar_path!) : undefined} />}
           {!mine && !groupStart && <span className="avatar-spacer" />}
           <div className="message-content">
             {active.group && groupStart && <span className="message-author">{mine ? 'Вы' : author?.display_name ?? 'Участник'}</span>}
-            {message.image_url && <button className="message-image" title="Открыть фотографию" onMouseDown={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" onLoad={() => { const scroll = scrollRef.current; if (scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120) scroll.scrollTop = scroll.scrollHeight }} /></button>}
-            {message.body && <div className="message-bubble" onMouseDown={(event) => void openMessageActions(message, event)}>{message.body}</div>}
+            {message.image_url && <button className="message-image" title="Открыть фотографию" onContextMenu={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" onLoad={() => { const scroll = scrollRef.current; if (scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120) scroll.scrollTop = scroll.scrollHeight }} /></button>}
+            {message.system_kind ? <div className="system-call-message" onContextMenu={(event) => void openMessageActions(message, event)}>{message.system_kind === 'declined_call' ? 'Звонок отклонён' : message.system_kind === 'ended_call' ? 'Звонок завершён' : 'Пропущенный звонок'}</div> : message.body && <div className="message-bubble" onContextMenu={(event) => void openMessageActions(message, event)}>{message.reply_to_id && <button type="button" className="message-reply-preview" onClick={() => { const target = messages.find((item) => item.id === message.reply_to_id); if (target) document.querySelector(`[data-message-id="${target.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}><span>Ответ на сообщение</span><strong>{messages.find((item) => item.id === message.reply_to_id)?.body || 'Фотография'}</strong></button>}{message.body}</div>}
             {reactionCounts.length > 0 && <div className="message-reactions">{reactionCounts.map((emoji) => {
               const reactionsForEmoji = reactions.filter((reaction) => reaction.emoji === emoji)
               const ownReaction = reactionsForEmoji.some((reaction) => reaction.user_id === user?.id)
@@ -2244,6 +2282,8 @@ export default function Messenger() {
             {messageActions?.id === message.id && <div className="message-actions-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
               <div className="message-action-reactions">{MESSAGE_REACTIONS.map((emoji) => <button key={emoji} type="button" role="menuitem" disabled={reactionBusy.has(`${message.id}:${emoji}`)} title={`Реакция ${emoji}`} onClick={() => void toggleMessageReaction(emoji)}>{emoji}</button>)}</div>
               {message.image_url && <button type="button" role="menuitem" onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><ExternalLink size={16} /> Открыть фотографию</button>}
+              <button type="button" role="menuitem" onClick={() => replyToMessage(message)}><Pencil size={16} /> Ответить</button>
+              <button type="button" role="menuitem" onClick={() => void togglePinnedMessage(message)}>{message.pinned_at ? 'Открепить' : 'Закрепить'}</button>
               <button type="button" role="menuitem" onClick={() => void copyMessage(message)} disabled={!message.body}><Copy size={16} /> Копировать</button>
               {mine && message.body && <button type="button" role="menuitem" onClick={() => editMessage(message)}><Pencil size={16} /> Изменить</button>}
               {mine && <button type="button" role="menuitem" className="message-action-delete" onClick={() => { setMessageActions(null); setMessageToDelete(message) }}><Trash2 size={16} /> Удалить</button>}
@@ -2253,6 +2293,7 @@ export default function Messenger() {
         </div>
       </Fragment>
     })}</div>}</div>
+    {replyingTo && <div className="replying-message-bar"><div><span>Ответ на сообщение</span><strong>{replyingTo.body || 'Фотография'}</strong></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Отменить ответ"><X size={15} /></button></div>}
     {editingMessage && <div className="editing-message-bar"><span>Изменение сообщения</span><button type="button" onClick={() => { setEditingMessage(null); setText('') }} aria-label="Отменить редактирование"><X size={15} /></button></div>}<form className="composer" onSubmit={(event) => void sendMessage(event)}><input ref={fileRef} type="file" accept="image/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void sendMessage(undefined, file); event.target.value = '' }} /><button type="button" className="icon-button attach-button" title="Прикрепить фотографию" aria-label="Прикрепить фотографию" onClick={() => fileRef.current?.click()}><ImagePlus size={19} /></button><textarea ref={composerRef} value={text} onChange={(event) => { const textarea = event.currentTarget; setText(textarea.value); textarea.style.height = 'auto'; textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px` }} onKeyDown={composerKey} placeholder={editingMessage ? 'Изменить сообщение…' : 'Напишите сообщение…'} rows={1} maxLength={4000} aria-label="Текст сообщения" /><button type="submit" className="send-button" disabled={sending || !text.trim()} aria-label={editingMessage ? 'Сохранить сообщение' : 'Отправить сообщение'}>{sending ? <LoaderCircle className="spin" size={17} /> : editingMessage ? <Check size={17} /> : <Send size={17} />}</button></form>
   </> : <div className="welcome-pane"><span className="welcome-overline">ТИШЕ. БЛИЖЕ. ПРОЩЕ.</span><div className="welcome-orbit"><span className="orbit-small orbit-one" /><span className="orbit-small orbit-two" /><span className="welcome-mark"><MessageCircle size={27} strokeWidth={1.7} /></span></div><h1>Хорошие разговоры<br />начинаются <em>здесь.</em></h1><p>Выберите друга и напишите ему. Остальное подождёт.</p><button className="primary-button welcome-button" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={16} /> Найти человека</button><div className="welcome-foot"><span />{friends.length ? `${friends.length} ${friends.length === 1 ? 'друг' : 'друзей'} рядом` : 'Ваш круг только начинается'}<span /></div></div>}</section>
 

@@ -21,6 +21,10 @@ export type Message = {
   image_path: string | null
   created_at: string
   image_url?: string
+  reply_to_id?: string | null
+  pinned_at?: string | null
+  pinned_by?: string | null
+  system_kind?: string | null
 }
 
 export type Group = {
