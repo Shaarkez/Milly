@@ -664,7 +664,7 @@ export default function Messenger() {
     const avatarRefresh = window.setInterval(() => { void refreshAccount(true) }, 45 * 60 * 1000)
     void refreshAccount()
     let presenceJoined = false
-    const presence = client.channel(`milly-presence:${user.id}`, { config: { private: true, presence: { key: user.id } } }).subscribe(async (status, failure) => {
+    const presence = client.channel(`milly-presence:${user.id}`, { config: { presence: { key: user.id } } }).subscribe(async (status) => {
       if (cancelled) return
       if (status === 'SUBSCRIBED') {
         presenceJoined = true
@@ -689,8 +689,6 @@ export default function Messenger() {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
         presenceJoined = false
         setPresenceFallback(true)
-        const reason = failure instanceof Error ? ` Причина: ${failure.message}` : ''
-        setNotice(`Realtime присутствия недоступен; работает резервный онлайн-статус.${reason}`)
       }
     })
     const refreshPresence = () => {
@@ -743,15 +741,13 @@ export default function Messenger() {
             .sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at))
         })
       })
-      .subscribe((status, failure) => {
+      .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           stopAccountFallback()
           setNotice((current) => current.startsWith('Realtime друзей недоступен') ? '' : current)
           void refreshAccount()
         }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          const reason = failure instanceof Error ? ` Причина: ${failure.message}` : ''
-          setNotice(`Realtime друзей недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд.${reason}`)
           scheduleAccountFallback()
         }
       })
@@ -805,7 +801,7 @@ export default function Messenger() {
     let cancelled = false
     setPresenceUnknown((current) => new Set([...current, ...friends.map((friend) => friend.id)]))
     const channels = friends.map((friend) => {
-      const channel = client.channel(`milly-presence:${friend.id}`, { config: { private: true, presence: { key: friend.id } } })
+      const channel = client.channel(`milly-presence:${friend.id}`, { config: { presence: { key: friend.id } } })
         .on('presence', { event: 'sync' }, () => {
           if (cancelled) return
           setOnline((current) => {
@@ -1095,7 +1091,7 @@ export default function Messenger() {
         realtimeMessages.delete(deletedId)
         updateConversationMessages(active.id, (current) => current.filter((message) => message.id !== deletedId))
       })
-      .subscribe((status, failure) => {
+      .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
         stopMessageFallback()
         retryDelay = 2500
@@ -1104,9 +1100,6 @@ export default function Messenger() {
         void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        setNotice(failure instanceof Error
-          ? `Realtime сообщений недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд. Причина: ${failure.message}`
-          : 'Realtime сообщений недоступен; включено резервное обновление с увеличивающимся интервалом до 30 секунд.')
         scheduleMessageFallback()
       }
     })
@@ -2161,7 +2154,6 @@ export default function Messenger() {
         : 'Добавьте в контакты для статуса'
   return <main className={`messenger-shell${profilePanelOpen && section === 'chats' ? ' has-profile-panel' : ''}${section === 'admin' ? ' admin-mode' : ''}`}><aside className="sidebar">
     <div className="sidebar-top"><div className="brand"><span className="brand-mark"><MessageCircle size={17} strokeWidth={2.4} /></span><span>milly</span><span className="brand-dot">.</span></div><div className="sidebar-top-actions"><button className="icon-button" title="Найти чаты и людей" aria-label="Найти чаты и людей" onClick={() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()}><Search size={15} /></button></div></div>
-    {presenceFallbackFriends.size > 0 && <div className="presence-warning" role="status">Не удалось проверить онлайн-статус части друзей. Переподключаемся…</div>}
     <label className="search-box"><Search size={15} /><input placeholder="Поиск людей и чатов" value={search} onChange={(event) => setSearch(event.target.value)} /><button type="button" className="search-clear" aria-label="Очистить поиск" onClick={() => setSearch('')}><X size={13} /></button></label>
     <div className="sidebar-section-heading"><span>{section === 'admin' ? 'УПРАВЛЕНИЕ' : search.trim() ? 'ПОИСК' : 'СООБЩЕНИЯ'}</span></div>
     {section === 'chats' ? <div className="contact-list">
