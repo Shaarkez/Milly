@@ -71,7 +71,7 @@ function Avatar({ name, online = false, large = false, image, retryKey, onImageE
   const retryIdentity = retryKey ?? image?.split('?')[0]
   useEffect(() => setImageFailed(false), [image])
   useEffect(() => { retried.current = false }, [retryIdentity])
-  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image && !imageFailed ? <img src={image} alt="" onError={() => { setImageFailed(true); if (!retried.current) { retried.current = true; onImageError?.() } }} /> : initials(name)}{online && <i className="presence-dot" />}</span>
+  return <span className={`avatar${large ? ' avatar-large' : ''}`} style={{ backgroundColor: colors[(name.charCodeAt(0) || 0) % colors.length] }}>{image && !imageFailed ? <img src={image} alt="" decoding="async" onError={() => { setImageFailed(true); if (!retried.current) { retried.current = true; onImageError?.() } }} /> : initials(name)}{online && <i className="presence-dot" />}</span>
 }
 
 function AuthScreen() {
@@ -2274,7 +2274,6 @@ export default function Messenger() {
           {!mine && !groupStart && <span className="avatar-spacer" />}
           <div className="message-content">
             {active.group && groupStart && <span className="message-author">{mine ? 'Вы' : author?.display_name ?? 'Участник'}</span>}
-            {message.image_url && <button className="message-image" title="Открыть фотографию" onContextMenu={(event) => void openMessageActions(message, event)} onClick={() => { setImageToView({ url: message.image_url!, alt: 'Фотография в сообщении' }); setMessageActions(null) }}><img src={message.image_url} alt="Фотография в сообщении" loading="lazy" onLoad={() => { const scroll = scrollRef.current; if (scroll && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120) scroll.scrollTop = scroll.scrollHeight }} /></button>}
             {message.system_kind ? <div className="system-call-message" onContextMenu={(event) => void openMessageActions(message, event)}>{message.system_kind === 'declined_call' ? 'Звонок отклонён' : message.system_kind === 'ended_call' ? 'Звонок завершён' : 'Пропущенный звонок'}</div> : message.body && <div className="message-bubble" onContextMenu={(event) => void openMessageActions(message, event)}>{replyTarget && <button type="button" className="message-reply-preview" onClick={() => document.querySelector(`[data-message-id="${replyTarget.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}><span>{replyAuthor}</span><strong>{replyTarget.body || 'Фотография'}</strong></button>}{message.body}</div>}
             {reactionCounts.length > 0 && <div className="message-reactions">{reactionCounts.map((emoji) => {
               const reactionsForEmoji = reactions.filter((reaction) => reaction.emoji === emoji)
