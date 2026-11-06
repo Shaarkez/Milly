@@ -1259,7 +1259,7 @@ body.milly-dark .profile-modal .profile-tabs { background: #171b20; }
 body.milly-dark .profile-modal .profile-tabs button { color: #9eafbf; }
 body.milly-dark .profile-modal .profile-tabs button.active { color: #fff; background: #387eaf; }
 
-.music-player { position: fixed; z-index: 1500; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); color: #27435b; font-family: inherit; will-change: left, top; }
+.music-player { position: fixed; z-index: 3000; isolation: isolate; pointer-events: auto; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); color: #27435b; font-family: inherit; will-change: left, top; transform: translateZ(0); backface-visibility: hidden; }
 .music-player-dragging { transition: none !important; cursor: grabbing; }
 .music-player-current, .music-player-header { cursor: grab; user-select: none; touch-action: none; }
 .music-player-mini, .music-player-full { overflow: hidden; background: #fff; border: 1px solid #d8e5f0; border-radius: 16px; box-shadow: 0 16px 44px #2a4a6630; animation: music-player-enter .22s cubic-bezier(.2,.75,.25,1) both; }
@@ -1316,8 +1316,8 @@ body.milly-dark .profile-modal .security-card label { color: #a9b6c2; }
 body.milly-dark .profile-modal .security-card input { color: #dce4ec; background: #1a2026; border-color: #3b4651; outline: none; box-shadow: none; }
 body.milly-dark .profile-modal .security-card input:focus, body.milly-dark .profile-modal .security-card input:focus-visible { border-color: #526f88; outline: none; box-shadow: none; }
 
-.music-header-button { color: #66849b; }
-.music-header-button:hover { color: #4d9bd1; background: #edf5fb; }
+.music-sidebar-button { color: #66849b; }
+.music-sidebar-button:hover { color: #4d9bd1; background: #edf5fb; }
 .music-player-mini, .music-player-full {
   background: color-mix(in srgb, #ffffff 96%, transparent);
   border-color: #d9e4ed;

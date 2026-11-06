@@ -18,6 +18,8 @@ export default function MusicPlayer() {
   const playerRef = useRef<HTMLElement>(null)
   const dragOffset = useRef({ x: 0, y: 0 })
   const isDragging = useRef(false)
+  const dragFrame = useRef<number | null>(null)
+  const dragPoint = useRef({ x: 0, y: 0 })
   const [mode, setMode] = useState<PlayerMode>(null)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [query, setQuery] = useState('')
@@ -79,6 +81,7 @@ export default function MusicPlayer() {
       panel.style.top = `${top}px`
       panel.style.right = 'auto'
       panel.style.bottom = 'auto'
+      setPosition({ left, top })
     }
     window.addEventListener('resize', keepPlayerVisible)
     return () => window.removeEventListener('resize', keepPlayerVisible)
@@ -122,10 +125,9 @@ export default function MusicPlayer() {
     const panel = playerRef.current
     if (!panel) return
     const rect = panel.getBoundingClientRect()
-    const left = position?.left ?? rect.left
-    const top = position?.top ?? rect.top
+    const left = rect.left
+    const top = rect.top
     dragOffset.current = { x: event.clientX - left, y: event.clientY - top }
-    setPosition({ left, top })
     isDragging.current = true
     panel.style.left = `${left}px`
     panel.style.top = `${top}px`
@@ -139,20 +141,37 @@ export default function MusicPlayer() {
     if (!isDragging.current) return
     const panel = playerRef.current
     if (!panel) return
-    const width = panel.offsetWidth
-    const height = panel.offsetHeight
-    const left = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - dragOffset.current.x))
-    const top = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - dragOffset.current.y))
-    panel.style.left = `${left}px`
-    panel.style.top = `${top}px`
-    panel.style.right = 'auto'
-    panel.style.bottom = 'auto'
+    dragPoint.current = { x: event.clientX, y: event.clientY }
+    if (dragFrame.current !== null) return
+    dragFrame.current = window.requestAnimationFrame(() => {
+      dragFrame.current = null
+      if (!isDragging.current) return
+      const currentPanel = playerRef.current
+      if (!currentPanel) return
+      const width = currentPanel.offsetWidth
+      const height = currentPanel.offsetHeight
+      const left = Math.max(8, Math.min(window.innerWidth - width - 8, dragPoint.current.x - dragOffset.current.x))
+      const top = Math.max(8, Math.min(window.innerHeight - height - 8, dragPoint.current.y - dragOffset.current.y))
+      currentPanel.style.left = `${left}px`
+      currentPanel.style.top = `${top}px`
+      currentPanel.style.right = 'auto'
+      currentPanel.style.bottom = 'auto'
+    })
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
     isDragging.current = false
+    if (dragFrame.current !== null) {
+      window.cancelAnimationFrame(dragFrame.current)
+      dragFrame.current = null
+    }
+    const panel = playerRef.current
+    if (panel) {
+      const rect = panel.getBoundingClientRect()
+      setPosition({ left: rect.left, top: rect.top })
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-    playerRef.current?.classList.remove('music-player-dragging')
+    panel?.classList.remove('music-player-dragging')
   }
 
   if (!mode) return null
@@ -198,7 +217,7 @@ export default function MusicPlayer() {
       </div>
       {mode === 'full' && <div className="music-player-results">
         {searchError && <span className="music-player-search-error">{searchError}</span>}
-        {tracks.map((item, index) => <button type="button" className={`music-player-result${index === trackIndex ? ' active' : ''}`} key={item.id} onClick={() => void selectTrack(index)}>
+        {tracks.map((item, index) => <button type="button" className={`music-player-result${index === trackIndex ? ' active' : ''}`} key={item.id} aria-label={index === trackIndex && playing ? `Поставить на паузу: ${item.title}` : `Воспроизвести: ${item.title}`} onClick={() => index === trackIndex ? void togglePlayback() : void selectTrack(index)}>
           <img src={item.album.cover_medium} alt="" />
           <span><strong>{item.title}</strong><small>{item.artist.name}</small></span>
           {index === trackIndex && playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
