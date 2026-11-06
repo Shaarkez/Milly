@@ -982,6 +982,7 @@ export default function Messenger() {
     if (!client || !user || !active) { setMessages([]); setLoadingMessages(false); return }
     let cancelled = false
     const realtimeMessages = new Map<string, Message>()
+    const deletedMessageIds = new Set<string>()
     let messageRefresh: number | undefined
     let refreshInProgress = false
     let retryDelay = 2500
@@ -1002,7 +1003,7 @@ export default function Messenger() {
           keepCurrent || messageCache.current.has(active.id) ? messageCache.current.get(active.id) ?? [] : [],
           enriched,
           [...realtimeMessages.values()],
-        )
+        ).filter((message) => !deletedMessageIds.has(message.id))
         messageCache.current.set(active.id, nextMessages)
         setMessages(nextMessages)
         setHasOlder(rows.length === pageSize)
@@ -1084,19 +1085,21 @@ export default function Messenger() {
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: messageTable, filter: messageFilter }, ({ old }) => {
         if (typeof old.id !== 'string') return
+        deletedMessageIds.add(old.id)
+        realtimeMessages.delete(old.id)
         updateConversationMessages(active.id, (current) => current.filter((message) => message.id !== old.id))
         setMessageReactions((current) => {
           const next = { ...current }
           delete next[old.id as string]
           return next
         })
+        const remainingMessages = messageCache.current.get(active.id) ?? []
+        const latestMessage = remainingMessages[remainingMessages.length - 1]
+        setConversations((current) => current.map((row) => row.id === active.id
+          ? { ...row, lastMessage: latestMessage, updated_at: latestMessage?.created_at ?? row.updated_at }
+          : row
+        ).sort((a, b) => (b.lastMessage?.created_at ?? b.updated_at).localeCompare(a.lastMessage?.created_at ?? a.updated_at)))
         void load(true).catch((caught) => { if (!cancelled) setError(readableError(caught)) })
-      })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, ({ old }) => {
-        const deletedId = old.id
-        if (typeof deletedId !== 'string') return
-        realtimeMessages.delete(deletedId)
-        updateConversationMessages(active.id, (current) => current.filter((message) => message.id !== deletedId))
       })
       .subscribe((status) => {
       if (status === 'SUBSCRIBED') {
