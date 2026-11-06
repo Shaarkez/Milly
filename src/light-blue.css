@@ -1259,9 +1259,9 @@ body.milly-dark .profile-modal .profile-tabs { background: #171b20; }
 body.milly-dark .profile-modal .profile-tabs button { color: #9eafbf; }
 body.milly-dark .profile-modal .profile-tabs button.active { color: #fff; background: #387eaf; }
 
-.music-player { position: fixed; z-index: 90; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); color: #27435b; font-family: inherit; }
-.music-player-button { display: grid; width: 52px; height: 52px; place-items: center; color: #fff; background: #4d9bd1; border: 0; border-radius: 16px; cursor: pointer; box-shadow: 0 12px 32px #315b7c38; transition: transform .18s ease, box-shadow .18s ease, background .18s ease; }
-.music-player-button:hover { background: #3f90c9; transform: translateY(-2px); box-shadow: 0 16px 38px #315b7c45; }
+.music-player { position: fixed; z-index: 1500; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); color: #27435b; font-family: inherit; will-change: left, top; }
+.music-player-dragging { transition: none !important; cursor: grabbing; }
+.music-player-current, .music-player-header { cursor: grab; user-select: none; touch-action: none; }
 .music-player-mini, .music-player-full { overflow: hidden; background: #fff; border: 1px solid #d8e5f0; border-radius: 16px; box-shadow: 0 16px 44px #2a4a6630; animation: music-player-enter .22s cubic-bezier(.2,.75,.25,1) both; }
 .music-player-mini { width: 330px; }
 .music-player-full { width: min(390px, calc(100vw - 36px)); height: min(620px, calc(100dvh - 36px)); display: flex; flex-direction: column; }
@@ -1305,7 +1305,6 @@ body.milly-dark .profile-modal .profile-tabs button.active { color: #fff; backgr
 @keyframes music-player-enter { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (max-width: 560px) {
   .music-player { right: 10px; bottom: 10px; }
-  .music-player-button { width: 48px; height: 48px; border-radius: 14px; }
   .music-player-mini { width: min(330px, calc(100vw - 20px)); }
   .music-player-full { width: calc(100vw - 20px); height: min(560px, calc(100dvh - 20px)); }
   .music-player-volume input { width: 44px; }

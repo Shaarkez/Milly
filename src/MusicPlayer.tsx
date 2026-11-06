@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Maximize2, Minimize2, Music2, Pause, Play, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 
-type PlayerMode = 'button' | 'mini' | 'full'
+type PlayerMode = 'mini' | 'full' | null
 type DeezerTrack = {
   id: number
   title: string
@@ -17,7 +17,8 @@ export default function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const playerRef = useRef<HTMLElement>(null)
   const dragOffset = useRef({ x: 0, y: 0 })
-  const [mode, setMode] = useState<PlayerMode>('button')
+  const isDragging = useRef(false)
+  const [mode, setMode] = useState<PlayerMode>(null)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [query, setQuery] = useState('')
   const [tracks, setTracks] = useState<DeezerTrack[]>([])
@@ -31,7 +32,7 @@ export default function MusicPlayer() {
   const track = tracks[trackIndex]
 
   useEffect(() => {
-    const openPlayer = () => setMode((current) => current === 'button' ? 'mini' : current)
+    const openPlayer = () => setMode((current) => current ?? 'mini')
     window.addEventListener('milly-open-music', openPlayer)
     return () => window.removeEventListener('milly-open-music', openPlayer)
   }, [])
@@ -67,6 +68,22 @@ export default function MusicPlayer() {
     audioRef.current.volume = volume
   }, [volume])
 
+  useEffect(() => {
+    const keepPlayerVisible = () => {
+      const panel = playerRef.current
+      if (!panel || !mode) return
+      const rect = panel.getBoundingClientRect()
+      const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, rect.left))
+      const top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, rect.top))
+      panel.style.left = `${left}px`
+      panel.style.top = `${top}px`
+      panel.style.right = 'auto'
+      panel.style.bottom = 'auto'
+    }
+    window.addEventListener('resize', keepPlayerVisible)
+    return () => window.removeEventListener('resize', keepPlayerVisible)
+  }, [mode])
+
   const togglePlayback = async () => {
     const audio = audioRef.current
     if (!audio || !track?.preview) return
@@ -101,7 +118,7 @@ export default function MusicPlayer() {
   }
 
   const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    if (mode === 'button' || (event.target as HTMLElement).closest('button')) return
+    if (!mode || (event.target as HTMLElement).closest('button,input,label,a,form,.music-player-results')) return
     const panel = playerRef.current
     if (!panel) return
     const rect = panel.getBoundingClientRect()
@@ -109,32 +126,43 @@ export default function MusicPlayer() {
     const top = position?.top ?? rect.top
     dragOffset.current = { x: event.clientX - left, y: event.clientY - top }
     setPosition({ left, top })
+    isDragging.current = true
+    panel.style.left = `${left}px`
+    panel.style.top = `${top}px`
+    panel.style.right = 'auto'
+    panel.style.bottom = 'auto'
     event.currentTarget.setPointerCapture(event.pointerId)
+    panel.classList.add('music-player-dragging')
   }
 
   const moveDrag = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !position) return
+    if (!isDragging.current) return
     const panel = playerRef.current
     if (!panel) return
     const width = panel.offsetWidth
     const height = panel.offsetHeight
     const left = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - dragOffset.current.x))
     const top = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - dragOffset.current.y))
-    setPosition({ left, top })
+    panel.style.left = `${left}px`
+    panel.style.top = `${top}px`
+    panel.style.right = 'auto'
+    panel.style.bottom = 'auto'
   }
 
   const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    isDragging.current = false
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    playerRef.current?.classList.remove('music-player-dragging')
   }
 
-  return <aside ref={playerRef} style={position && mode !== 'button' ? { left: position.left, top: position.top, right: 'auto', bottom: 'auto' } : undefined} className={`music-player music-player-${mode}`} aria-label="Музыкальный плеер">
-    {mode === 'button' && null}
-    {mode !== 'button' && <>
-      <header className="music-player-header" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+  if (!mode) return null
+
+  return <aside ref={playerRef} style={position ? { left: position.left, top: position.top, right: 'auto', bottom: 'auto' } : undefined} className={`music-player music-player-${mode}`} aria-label="Музыкальный плеер" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+      <header className="music-player-header">
         <div className="music-player-brand"><span><Music2 size={15} /></span><strong>{mode === 'full' ? 'Музыка' : 'Сейчас играет'}</strong></div>
         <div className="music-player-header-actions">
           <button type="button" className="icon-button" aria-label={mode === 'full' ? 'Свернуть плеер' : 'Развернуть плеер'} onClick={() => setMode(mode === 'full' ? 'mini' : 'full')}>{mode === 'full' ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
-          <button type="button" className="icon-button" aria-label="Закрыть плеер" onClick={() => setMode('button')}><X size={16} /></button>
+          <button type="button" className="icon-button" aria-label="Закрыть плеер" onClick={() => { setMode(null); setPosition(null) }}><X size={16} /></button>
         </div>
       </header>
       {mode === 'full' && <form className="music-player-search" onSubmit={(event) => void searchTracks(event)}>
@@ -176,6 +204,5 @@ export default function MusicPlayer() {
           {index === trackIndex && playing ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" />}
         </button>)}
       </div>}
-    </>}
   </aside>
 }
