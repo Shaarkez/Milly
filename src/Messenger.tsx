@@ -6,6 +6,7 @@ import type { CallSignal, Conversation, FriendRequest, Group, Message, Profile }
 import { isAllowedImage, registrationSchema, signInSchema, usernameSchema } from './lib/validation'
 import { messagesBelongToSameGroup } from './lib/messageGrouping'
 import { mergeMessages } from './lib/messageOrdering'
+import MusicPlayer from './MusicPlayer'
 
 type Dialog = 'profile' | null
 type CallPhase = 'idle' | 'calling' | 'incoming' | 'connecting' | 'connected'
@@ -2382,6 +2383,7 @@ export default function Messenger() {
   </div>}
   {topNotice && <div className="clipboard-toast" role="status"><Check size={17} /> {topNotice}</div>}
   {copiedUsernameNotice && <div className="clipboard-toast" role="status"><Check size={17} /> Юзернейм скопирован</div>}
+  <MusicPlayer />
   {imageToView && <div className="image-viewer-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setImageToView(null) }}>
     <section className="image-viewer" role="dialog" aria-modal="true" aria-label="Просмотр фотографии">
       <button type="button" className="image-viewer-close" aria-label="Закрыть фотографию" onClick={() => setImageToView(null)}><X size={19} /></button>
