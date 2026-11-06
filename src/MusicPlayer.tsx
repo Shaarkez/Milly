@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { Maximize2, Minimize2, Music2, Pause, Play, Search, SkipBack, SkipForward, Volume2, VolumeX, X } from 'lucide-react'
 
 type PlayerMode = 'button' | 'mini' | 'full'
@@ -15,7 +15,10 @@ const formatTime = (value: number) => `${Math.floor(value / 60)}:${String(Math.f
 
 export default function MusicPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null)
+  const playerRef = useRef<HTMLElement>(null)
+  const dragOffset = useRef({ x: 0, y: 0 })
   const [mode, setMode] = useState<PlayerMode>('button')
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   const [query, setQuery] = useState('')
   const [tracks, setTracks] = useState<DeezerTrack[]>([])
   const [trackIndex, setTrackIndex] = useState(0)
@@ -27,13 +30,19 @@ export default function MusicPlayer() {
 
   const track = tracks[trackIndex]
 
+  useEffect(() => {
+    const openPlayer = () => setMode((current) => current === 'button' ? 'mini' : current)
+    window.addEventListener('milly-open-music', openPlayer)
+    return () => window.removeEventListener('milly-open-music', openPlayer)
+  }, [])
+
   const searchTracks = async (event?: FormEvent) => {
     event?.preventDefault()
     const term = query.trim() || 'popular hits'
     setLoading(true)
     setSearchError('')
     try {
-      const response = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(term)}&limit=20`)
+      const response = await fetch(`/api/music/search?q=${encodeURIComponent(term)}&limit=20`)
       if (!response.ok) throw new Error('Не удалось получить список треков')
       const result = await response.json() as { data?: DeezerTrack[]; error?: { message?: string } }
       if (result.error?.message) throw new Error(result.error.message)
@@ -91,10 +100,37 @@ export default function MusicPlayer() {
     void selectTrack(next)
   }
 
-  return <aside className={`music-player music-player-${mode}`} aria-label="Музыкальный плеер">
-    {mode === 'button' && <button type="button" className="music-player-button" aria-label="Открыть плеер" title="Музыкальный плеер" onClick={() => setMode('mini')}><Music2 size={21} /></button>}
+  const beginDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (mode === 'button' || (event.target as HTMLElement).closest('button')) return
+    const panel = playerRef.current
+    if (!panel) return
+    const rect = panel.getBoundingClientRect()
+    const left = position?.left ?? rect.left
+    const top = position?.top ?? rect.top
+    dragOffset.current = { x: event.clientX - left, y: event.clientY - top }
+    setPosition({ left, top })
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const moveDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId) || !position) return
+    const panel = playerRef.current
+    if (!panel) return
+    const width = panel.offsetWidth
+    const height = panel.offsetHeight
+    const left = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - dragOffset.current.x))
+    const top = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - dragOffset.current.y))
+    setPosition({ left, top })
+  }
+
+  const endDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  return <aside ref={playerRef} style={position && mode !== 'button' ? { left: position.left, top: position.top, right: 'auto', bottom: 'auto' } : undefined} className={`music-player music-player-${mode}`} aria-label="Музыкальный плеер">
+    {mode === 'button' && null}
     {mode !== 'button' && <>
-      <header className="music-player-header">
+      <header className="music-player-header" onPointerDown={beginDrag} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
         <div className="music-player-brand"><span><Music2 size={15} /></span><strong>{mode === 'full' ? 'Музыка' : 'Сейчас играет'}</strong></div>
         <div className="music-player-header-actions">
           <button type="button" className="icon-button" aria-label={mode === 'full' ? 'Свернуть плеер' : 'Развернуть плеер'} onClick={() => setMode(mode === 'full' ? 'mini' : 'full')}>{mode === 'full' ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
